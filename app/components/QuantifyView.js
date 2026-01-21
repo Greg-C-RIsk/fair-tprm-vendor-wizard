@@ -1,181 +1,229 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 
-/* ---------- Helpers ---------- */
+/**
+ * QuantifyView – STABLE TRAINING FORM
+ * - No Monte Carlo
+ * - No charts
+ * - No derived maths
+ * - Just FAIR estimation inputs (min / ML / max)
+ *
+ * Props:
+ * - vendor
+ * - scenario
+ * - updateVendor(vendorId, patch)
+ * - setActiveView(viewKey)
+ */
 
-const clamp01 = (x) => Math.max(0, Math.min(1, x));
+const emptyTriad = (t) => ({
+  min: t?.min ?? "",
+  ml: t?.ml ?? "",
+  max: t?.max ?? "",
+});
 
-const money = (n) => {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return "—";
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 0,
-  }).format(x);
+const ensureQuant = (scenario) => {
+  const q = scenario?.quant || {};
+  return {
+    level: q.level || "LEF",
+
+    lef: emptyTriad(q.lef),
+    tef: emptyTriad(q.tef),
+    contactFrequency: emptyTriad(q.contactFrequency),
+    probabilityOfAction: emptyTriad(q.probabilityOfAction),
+    susceptibility: emptyTriad(q.susceptibility),
+
+    threatCapacity: emptyTriad(q.threatCapacity),
+    resistanceStrength: emptyTriad(q.resistanceStrength),
+
+    primaryLoss: emptyTriad(q.primaryLoss),
+    secondaryLossEventFrequency: emptyTriad(q.secondaryLossEventFrequency),
+    secondaryLossMagnitude: emptyTriad(q.secondaryLossMagnitude),
+  };
 };
-
-const triangular = (min, ml, max) => {
-  const a = Number(min);
-  const c = Number(ml);
-  const b = Number(max);
-  if (![a, b, c].every(Number.isFinite)) return 0;
-  if (b <= a) return a;
-  const u = Math.random();
-  const fc = (c - a) / (b - a);
-  return u < fc
-    ? a + Math.sqrt(u * (b - a) * (c - a))
-    : b - Math.sqrt((1 - u) * (b - a) * (b - c));
-};
-
-const poisson = (lambda) => {
-  const L = Math.exp(-lambda);
-  let k = 0;
-  let p = 1;
-  do {
-    k++;
-    p *= Math.random();
-  } while (p > L);
-  return k - 1;
-};
-
-const quantile = (arr, q) => {
-  if (!arr.length) return 0;
-  const s = [...arr].sort((a, b) => a - b);
-  const pos = (s.length - 1) * q;
-  const base = Math.floor(pos);
-  const rest = pos - base;
-  return s[base + 1] !== undefined
-    ? s[base] + rest * (s[base + 1] - s[base])
-    : s[base];
-};
-
-/* ---------- UI ---------- */
 
 function Triad({ label, unit, value, onChange }) {
   return (
     <div className="card" style={{ padding: 12 }}>
-      <div style={{ fontWeight: 800 }}>{label}</div>
-      {unit && <div style={{ fontSize: 12, opacity: 0.7 }}>{unit}</div>}
+      <div style={{ fontWeight: 800, marginBottom: 6 }}>
+        {label} {unit ? <span style={{ opacity: 0.6 }}>({unit})</span> : null}
+      </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
-        {["min", "ml", "max"].map((k) => (
-          <input
-            key={k}
-            className="input"
-            placeholder={k.toUpperCase()}
-            value={value[k]}
-            onChange={(e) => onChange({ ...value, [k]: e.target.value })}
-          />
-        ))}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+        <input
+          className="input"
+          placeholder="Min"
+          value={value.min}
+          onChange={(e) => onChange({ ...value, min: e.target.value })}
+        />
+        <input
+          className="input"
+          placeholder="Most likely"
+          value={value.ml}
+          onChange={(e) => onChange({ ...value, ml: e.target.value })}
+        />
+        <input
+          className="input"
+          placeholder="Max"
+          value={value.max}
+          onChange={(e) => onChange({ ...value, max: e.target.value })}
+        />
       </div>
     </div>
   );
 }
 
-/* ---------- Main View ---------- */
-
-export default function QuantifyView({ vendor, scenario, updateVendor }) {
+export default function QuantifyView({ vendor, scenario, updateVendor, setActiveView }) {
   if (!vendor || !scenario) {
-    return <div className="card">Select a vendor and scenario.</div>;
+    return <div className="card">Select a vendor and a scenario first.</div>;
   }
 
-  const q = scenario.quant;
-  const [running, setRunning] = useState(false);
-  const cancelRef = useRef(false);
+  const q = useMemo(() => ensureQuant(scenario), [scenario]);
 
   const updateQuant = (patch) => {
     updateVendor(vendor.id, {
       scenarios: vendor.scenarios.map((s) =>
-        s.id === scenario.id ? { ...s, quant: { ...q, ...patch } } : s
+        s.id === scenario.id
+          ? { ...s, quant: { ...q, ...patch } }
+          : s
       ),
     });
   };
 
-  const runSimulation = async () => {
-    setRunning(true);
-    cancelRef.current = false;
-
-    const sims = Number(q.sims) || 10000;
-    const ale = [];
-    const pel = [];
-
-    for (let i = 0; i < sims; i++) {
-      if (cancelRef.current) break;
-
-      const lef = triangular(q.lef.min, q.lef.ml, q.lef.max);
-      const primary = triangular(q.primaryLoss.min, q.primaryLoss.ml, q.primaryLoss.max);
-      const slef = triangular(
-        q.secondaryLossEventFrequency.min,
-        q.secondaryLossEventFrequency.ml,
-        q.secondaryLossEventFrequency.max
-      );
-      const slm = triangular(
-        q.secondaryLossMagnitude.min,
-        q.secondaryLossMagnitude.ml,
-        q.secondaryLossMagnitude.max
-      );
-
-      const perEvent = primary + slef * slm;
-      const events = poisson(lef);
-
-      let annual = 0;
-      for (let e = 0; e < events; e++) {
-        annual += perEvent;
-        pel.push(perEvent);
-      }
-      ale.push(annual);
-    }
-
-    updateQuant({
-      aleSamples: ale,
-      pelSamples: pel,
-      stats: {
-        ale: {
-          min: quantile(ale, 0.01),
-          ml: quantile(ale, 0.5),
-          max: quantile(ale, 0.99),
-          p10: quantile(ale, 0.1),
-          p90: quantile(ale, 0.9),
-        },
-      },
-      lastRunAt: new Date().toISOString(),
-    });
-
-    setRunning(false);
-  };
-
   return (
-    <div className="card">
+    <div className="card card-pad">
       <h2>Quantification (FAIR)</h2>
+      <p style={{ opacity: 0.75 }}>
+        Training mode — provide <strong>min / most likely / max</strong> estimates
+        for each FAIR factor.
+      </p>
 
-      <Triad label="LEF" unit="per year" value={q.lef} onChange={(v) => updateQuant({ lef: v })} />
-      <Triad label="Primary Loss" unit="€" value={q.primaryLoss} onChange={(v) => updateQuant({ primaryLoss: v })} />
-      <Triad
-        label="Secondary Loss Event Frequency"
-        value={q.secondaryLossEventFrequency}
-        onChange={(v) => updateQuant({ secondaryLossEventFrequency: v })}
-      />
-      <Triad
-        label="Secondary Loss Magnitude"
-        unit="€"
-        value={q.secondaryLossMagnitude}
-        onChange={(v) => updateQuant({ secondaryLossMagnitude: v })}
-      />
-
-      <div style={{ marginTop: 12 }}>
-        <button className="btn primary" onClick={runSimulation} disabled={running}>
-          {running ? "Running..." : "Run Monte Carlo"}
-        </button>
+      {/* LEVEL */}
+      <div className="card" style={{ padding: 12, marginTop: 14 }}>
+        <div className="label">FAIR abstraction level</div>
+        <select
+          className="input"
+          value={q.level}
+          onChange={(e) => updateQuant({ level: e.target.value })}
+          style={{ maxWidth: 280 }}
+        >
+          <option value="LEF">LEF (Loss Event Frequency)</option>
+          <option value="TEF">TEF (Threat Event Frequency)</option>
+          <option value="Contact Frequency">Contact Frequency</option>
+        </select>
       </div>
 
-      {q.stats && (
-        <div className="card" style={{ marginTop: 14 }}>
-          <div><strong>ALE (Median):</strong> {money(q.stats.ale.ml)}</div>
-          <div><strong>P90:</strong> {money(q.stats.ale.p90)}</div>
-        </div>
-      )}
+      {/* FREQUENCY */}
+      <div style={{ marginTop: 16 }}>
+        <h3>Frequency factors</h3>
+
+        {q.level === "LEF" && (
+          <Triad
+            label="LEF – Loss Event Frequency"
+            unit="per year"
+            value={q.lef}
+            onChange={(v) => updateQuant({ lef: v })}
+          />
+        )}
+
+        {q.level === "TEF" && (
+          <>
+            <Triad
+              label="TEF – Threat Event Frequency"
+              unit="per year"
+              value={q.tef}
+              onChange={(v) => updateQuant({ tef: v })}
+            />
+            <Triad
+              label="Susceptibility"
+              unit="%"
+              value={q.susceptibility}
+              onChange={(v) => updateQuant({ susceptibility: v })}
+            />
+          </>
+        )}
+
+        {q.level === "Contact Frequency" && (
+          <>
+            <Triad
+              label="Contact Frequency"
+              unit="per year"
+              value={q.contactFrequency}
+              onChange={(v) => updateQuant({ contactFrequency: v })}
+            />
+            <Triad
+              label="Probability of Action"
+              unit="%"
+              value={q.probabilityOfAction}
+              onChange={(v) => updateQuant({ probabilityOfAction: v })}
+            />
+            <Triad
+              label="Susceptibility"
+              unit="%"
+              value={q.susceptibility}
+              onChange={(v) => updateQuant({ susceptibility: v })}
+            />
+          </>
+        )}
+      </div>
+
+      {/* CAPABILITY / RESISTANCE */}
+      <div style={{ marginTop: 16 }}>
+        <h3>Threat vs resistance</h3>
+
+        <Triad
+          label="Threat Capacity"
+          unit="relative score"
+          value={q.threatCapacity}
+          onChange={(v) => updateQuant({ threatCapacity: v })}
+        />
+
+        <Triad
+          label="Resistance Strength"
+          unit="relative score"
+          value={q.resistanceStrength}
+          onChange={(v) => updateQuant({ resistanceStrength: v })}
+        />
+      </div>
+
+      {/* LOSSES */}
+      <div style={{ marginTop: 16 }}>
+        <h3>Loss magnitude</h3>
+
+        <Triad
+          label="Primary Loss"
+          unit="€ per event"
+          value={q.primaryLoss}
+          onChange={(v) => updateQuant({ primaryLoss: v })}
+        />
+
+        <Triad
+          label="Secondary Loss Event Frequency"
+          unit="events per primary loss"
+          value={q.secondaryLossEventFrequency}
+          onChange={(v) => updateQuant({ secondaryLossEventFrequency: v })}
+        />
+
+        <Triad
+          label="Secondary Loss Magnitude"
+          unit="€ per secondary event"
+          value={q.secondaryLossMagnitude}
+          onChange={(v) => updateQuant({ secondaryLossMagnitude: v })}
+        />
+      </div>
+
+      {/* NAV */}
+      <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
+        <button className="btn" onClick={() => setActiveView("Scenarios")}>
+          Back to scenarios
+        </button>
+        <button
+          className="btn primary"
+          onClick={() => setActiveView("Treatments")}
+        >
+          Continue to treatments
+        </button>
+      </div>
     </div>
   );
 }
