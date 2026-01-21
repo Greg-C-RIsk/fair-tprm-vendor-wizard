@@ -204,7 +204,7 @@ export default function Page() {
       </div>
 
       {activeView === "Vendors" && selectedVendor && (
-        <VendorView
+        <VendorsView
           vendor={selectedVendor}
           addScenario={() => addScenario(selectedVendor.id)}
           updateVendor={updateVendor}
