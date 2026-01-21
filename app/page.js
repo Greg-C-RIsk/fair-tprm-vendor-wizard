@@ -1,18 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-// ------------------------------
-// Semi-guided FAIR TPRM Training Tool (in-memory + localStorage)
-// - Multi-vendor, multi-scenario
-// - FAIR-ish workflow: Context -> Scenarios -> Quantify -> Treatments -> Decisions -> Portfolio -> Exports
-// - Training-only: no login, no database
-// ------------------------------
+// ---------------------------------------------
+// FAIR TPRM Training Tool (browser-only)
+// - Multi-vendor / multi-scenario
+// - Tiering matrix (1-5) with prioritization index (product)
+// - Monte Carlo FAIR-ish quant (Poisson frequency + loss distribution)
+// - Auto-suggest treatments from drivers
+// - Decision dashboard
+// ---------------------------------------------
 
-const LS_KEY = "fair_tprm_training_v2";
+const LS_KEY = "fair_tprm_training_v3";
 
 const uid = () => Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
 
@@ -27,6 +29,73 @@ const money = (n) => {
   }).format(x);
 };
 
+const clamp01 = (x) => Math.max(0, Math.min(1, x));
+
+// --- distributions
+const triangularSample = (min, ml, max) => {
+  const a = Number(min);
+  const c = Number(ml);
+  const b = Number(max);
+  if (![a, b, c].every((v) => Number.isFinite(v))) return 0;
+  if (b <= a) return a;
+  const u = Math.random();
+  const fc = (c - a) / (b - a);
+  if (u < fc) return a + Math.sqrt(u * (b - a) * (c - a));
+  return b - Math.sqrt((1 - u) * (b - a) * (b - c));
+};
+
+// Poisson sampler (Knuth)
+const poisson = (lambda) => {
+  const L = Math.exp(-lambda);
+  let k = 0;
+  let p = 1;
+  do {
+    k++;
+    p *= Math.random();
+  } while (p > L);
+  return k - 1;
+};
+
+const quantile = (arr, q) => {
+  if (!arr.length) return 0;
+  const a = [...arr].sort((x, y) => x - y);
+  const pos = (a.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  if (a[base + 1] === undefined) return a[base];
+  return a[base] + rest * (a[base + 1] - a[base]);
+};
+
+const summarizeTriad = (min, ml, max) => {
+  const a = Number(min);
+  const c = Number(ml);
+  const b = Number(max);
+  return {
+    min: Number.isFinite(a) ? a : 0,
+    ml: Number.isFinite(c) ? c : 0,
+    max: Number.isFinite(b) ? b : 0,
+  };
+};
+
+// ---------------------------------------------
+// Data model
+// ---------------------------------------------
+
+const emptyTiering = () => ({
+  dataSensitivity: 1,
+  integrationDepth: 1,
+  accessPrivileges: 1,
+  historicalIncidents: 1,
+  businessCriticality: 1,
+});
+
+const tierIndex = (t) =>
+  Number(t.dataSensitivity || 1) *
+  Number(t.integrationDepth || 1) *
+  Number(t.accessPrivileges || 1) *
+  Number(t.historicalIncidents || 1) *
+  Number(t.businessCriticality || 1);
+
 const emptyVendor = () => ({
   id: uid(),
   name: "",
@@ -38,7 +107,25 @@ const emptyVendor = () => ({
   dependencyLevel: "Medium",
   tier: "",
   tierRationale: "",
+  tiering: emptyTiering(),
+  carryForward: false,
   scenarios: [],
+});
+
+const emptyQuant = () => ({
+  // abstraction level
+  level: "LEF",
+  // frequency
+  tef: { min: "", ml: "", max: "" }, // per year
+  susc: { min: "", ml: "", max: "" }, // %
+  // loss per event (primary + secondary)
+  pel: { min: "", ml: "", max: "" }, // per event loss exposure
+  // results
+  sims: 10000,
+  lastRunAt: "",
+  aleSamples: [],
+  pelSamples: [],
+  stats: null,
 });
 
 const emptyScenario = () => ({
@@ -46,26 +133,15 @@ const emptyScenario = () => ({
   title: "",
   assetAtRisk: "",
   threatActor: "External cybercriminal",
-  threatEvent: "",
+  attackVector: "",
   lossEvent: "",
-  primaryLossTypes: "",
-  secondaryLossTypes: "",
   narrative: "",
-  // Quantification (entered by learner)
+  // quant
   assumptions: "",
-  tefLow: "",
-  tefHigh: "",
-  suscLow: "",
-  suscHigh: "",
-  lmPrimary: "",
-  lmSecondary: "",
-  eal: "",
-  p90: "",
-  p95: "",
-  drivers: "",
-  // Treatments
+  quant: emptyQuant(),
+  // treatments (auto-suggested + editable)
   treatments: [],
-  // Decision
+  // decision
   decision: {
     status: "",
     owner: "",
@@ -75,26 +151,34 @@ const emptyScenario = () => ({
   },
 });
 
-const emptyTreatment = () => ({
+const emptyTreatment = (kind) => ({
   id: uid(),
-  type: "Reduce susceptibility",
-  control: "",
+  kind, // Reduce TEF / Reduce susceptibility / Reduce loss magnitude / Transfer / Avoid
+  title: "",
+  owner: "",
   annualCost: "",
-  annualRiskReduction: "",
-  residualEal: "",
+  // effect model (simple training model)
+  effectPct: 20, // % reduction on target driver
 });
 
-function SectionTitle({ title, subtitle }) {
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.01em" }}>{title}</div>
-      {subtitle ? <div style={{ marginTop: 4 }} className="h-sub">{subtitle}</div> : null}
-    </div>
-  );
-}
+// ---------------------------------------------
+// UI helpers
+// ---------------------------------------------
 
 function Pill({ children }) {
   return <span className="badge">{children}</span>;
+}
+
+function SectionTitle({ title, subtitle, right }) {
+  return (
+    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
+      <div>
+        <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.01em" }}>{title}</div>
+        {subtitle ? <div style={{ marginTop: 4 }} className="h-sub">{subtitle}</div> : null}
+      </div>
+      {right ? <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>{right}</div> : null}
+    </div>
+  );
 }
 
 function Select({ value, onChange, options }) {
@@ -109,11 +193,23 @@ function Select({ value, onChange, options }) {
   );
 }
 
+function ScoreSelect({ value, onChange }) {
+  return (
+    <select className="input" value={String(value)} onChange={(e) => onChange(Number(e.target.value))}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <option key={n} value={String(n)}>
+          {n}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function QualityBanner({ items }) {
   if (!items.length) return null;
   return (
     <div className="hint" style={{ borderColor: "rgba(110,231,255,0.25)" }}>
-      <div style={{ fontWeight: 700, color: "rgba(255,255,255,0.90)" }}>Quality checks</div>
+      <div style={{ fontWeight: 800, color: "rgba(255,255,255,0.92)" }}>Quality checks</div>
       <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
         {items.map((it) => (
           <li key={it}>{it}</li>
@@ -123,47 +219,134 @@ function QualityBanner({ items }) {
   );
 }
 
-function MiniBars({ title, rows }) {
-  const max = Math.max(1, ...rows.map((r) => r.value));
+function SparkHistogram({ title, values, width = 520, height = 120, bins = 24 }) {
+  const v = values || [];
+  const data = useMemo(() => {
+    if (!v.length) return null;
+    const min = Math.min(...v);
+    const max = Math.max(...v);
+    const span = Math.max(1e-9, max - min);
+    const counts = Array.from({ length: bins }, () => 0);
+    for (const x of v) {
+      const idx = Math.min(bins - 1, Math.max(0, Math.floor(((x - min) / span) * bins)));
+      counts[idx] += 1;
+    }
+    const m = Math.max(1, ...counts);
+    return { min, max, counts, m };
+  }, [v, bins]);
+
+  if (!data) {
+    return (
+      <div className="card card-pad">
+        <div style={{ fontWeight: 800, marginBottom: 8 }}>{title}</div>
+        <div style={{ color: "rgba(255,255,255,0.65)" }}>Run a simulation to see the distribution.</div>
+      </div>
+    );
+  }
+
+  const { min, max, counts, m } = data;
+  const barW = width / bins;
+
   return (
     <div className="card card-pad">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ fontSize: 14, fontWeight: 800 }}>{title}</div>
-        <Pill>Portfolio</Pill>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+        <div style={{ fontWeight: 800 }}>{title}</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
+          {money(min)} → {money(max)}
+        </div>
       </div>
-      <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-        {rows.map((r) => (
-          <div key={r.label} style={{ display: "grid", gridTemplateColumns: "220px 1fr 120px", gap: 10, alignItems: "center" }}>
-            <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.label}>
-              {r.label}
-            </div>
-            <div style={{ height: 10, borderRadius: 999, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", overflow: "hidden" }}>
-              <div
-                style={{
-                  height: "100%",
-                  width: `${Math.round((r.value / max) * 100)}%`,
-                  background: "linear-gradient(90deg, rgba(110,231,255,0.55), rgba(167,139,250,0.55))",
-                }}
-              />
-            </div>
-            <div style={{ textAlign: "right", fontSize: 13, color: "rgba(255,255,255,0.82)" }}>{money(r.value)}</div>
-          </div>
-        ))}
-      </div>
+      <svg width={width} height={height} style={{ marginTop: 10, borderRadius: 12, overflow: "hidden", border: "1px solid rgba(255,255,255,0.10)" }}>
+        {counts.map((c, i) => {
+          const h = (c / m) * (height - 18);
+          return (
+            <rect
+              key={i}
+              x={i * barW}
+              y={height - h}
+              width={Math.max(1, barW - 2)}
+              height={h}
+              rx="3"
+              opacity="0.85"
+              fill="currentColor"
+            />
+          );
+        })}
+      </svg>
     </div>
   );
 }
 
+function ExceedanceCurve({ title, values, width = 520, height = 180, points = 60 }) {
+  const v = values || [];
+  const data = useMemo(() => {
+    if (!v.length) return null;
+    const sorted = [...v].sort((a, b) => a - b);
+    const n = sorted.length;
+    const xs = [];
+    for (let i = 0; i < points; i++) {
+      const q = i / (points - 1);
+      xs.push(sorted[Math.floor(q * (n - 1))]);
+    }
+    const min = xs[0];
+    const max = xs[xs.length - 1];
+    return { xs, min, max };
+  }, [v, points]);
+
+  if (!data) {
+    return (
+      <div className="card card-pad">
+        <div style={{ fontWeight: 800, marginBottom: 8 }}>{title}</div>
+        <div style={{ color: "rgba(255,255,255,0.65)" }}>Run a simulation to see the loss exceedance curve.</div>
+      </div>
+    );
+  }
+
+  const { xs, min, max } = data;
+  const pad = 18;
+  const w = width;
+  const h = height;
+
+  // Exceedance P(L > x) = 1 - F(x)
+  const pts = xs.map((x, i) => {
+    const q = i / (xs.length - 1);
+    const ex = 1 - q;
+    const nx = (x - min) / Math.max(1e-9, max - min);
+    const ny = ex; // 0..1
+    const px = pad + nx * (w - 2 * pad);
+    const py = pad + (1 - ny) * (h - 2 * pad);
+    return [px, py];
+  });
+
+  const d = pts.map((p, i) => (i === 0 ? `M ${p[0]} ${p[1]}` : `L ${p[0]} ${p[1]}`)).join(" ");
+
+  return (
+    <div className="card card-pad">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+        <div style={{ fontWeight: 800 }}>{title}</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
+          {money(min)} → {money(max)}
+        </div>
+      </div>
+      <svg width={w} height={h} style={{ marginTop: 10, borderRadius: 12, overflow: "hidden", border: "1px solid rgba(255,255,255,0.10)" }}>
+        <path d={d} fill="none" stroke="currentColor" strokeWidth="2" opacity="0.9" />
+      </svg>
+      <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.7)" }}>Y = P(Loss &gt; x) (exceedance)</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------
+// Page
+// ---------------------------------------------
+
 export default function Page() {
   const [activeView, setActiveView] = useState("Vendors");
   const [state, setState] = useState(() => {
-    // Load from localStorage for training continuity
     if (typeof window === "undefined") return { vendors: [], selectedVendorId: "", selectedScenarioId: "" };
     try {
       const raw = window.localStorage.getItem(LS_KEY);
       if (!raw) return { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" };
       const parsed = JSON.parse(raw);
-      // Light defensive defaults
       if (!parsed?.vendors?.length) return { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" };
       return parsed;
     } catch {
@@ -180,6 +363,7 @@ export default function Page() {
   }, [state]);
 
   const vendors = state.vendors;
+
   const selectedVendor = useMemo(
     () => vendors.find((v) => v.id === state.selectedVendorId) || vendors[0] || null,
     [vendors, state.selectedVendorId]
@@ -190,7 +374,6 @@ export default function Page() {
     return selectedVendor.scenarios.find((s) => s.id === state.selectedScenarioId) || selectedVendor.scenarios[0] || null;
   }, [selectedVendor, state.selectedScenarioId]);
 
-  // Ensure selection is always valid
   useEffect(() => {
     if (!vendors.length) {
       setState({ vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" });
@@ -212,6 +395,17 @@ export default function Page() {
     }));
   };
 
+  const setScenario = (scenarioId, patch) => {
+    if (!selectedVendor) return;
+    setState((prev) => ({
+      ...prev,
+      vendors: prev.vendors.map((v) => {
+        if (v.id !== selectedVendor.id) return v;
+        return { ...v, scenarios: v.scenarios.map((s) => (s.id === scenarioId ? { ...s, ...patch } : s)) };
+      }),
+    }));
+  };
+
   const addVendor = () => {
     const v = emptyVendor();
     setState((prev) => ({
@@ -220,6 +414,7 @@ export default function Page() {
       selectedVendorId: v.id,
       selectedScenarioId: "",
     }));
+    setActiveView("Vendors");
   };
 
   const deleteVendor = (vendorId) => {
@@ -238,14 +433,12 @@ export default function Page() {
   const addScenario = () => {
     if (!selectedVendor) return;
     const s = emptyScenario();
-    s.title = "";
     setState((prev) => ({
       ...prev,
-      vendors: prev.vendors.map((v) =>
-        v.id === selectedVendor.id ? { ...v, scenarios: [...v.scenarios, s] } : v
-      ),
+      vendors: prev.vendors.map((v) => (v.id === selectedVendor.id ? { ...v, scenarios: [...v.scenarios, s] } : v)),
       selectedScenarioId: s.id,
     }));
+    setActiveView("Scenarios");
   };
 
   const deleteScenario = (scenarioId) => {
@@ -261,47 +454,15 @@ export default function Page() {
     });
   };
 
-  const setScenario = (scenarioId, patch) => {
-    if (!selectedVendor) return;
-    setState((prev) => ({
-      ...prev,
-      vendors: prev.vendors.map((v) => {
-        if (v.id !== selectedVendor.id) return v;
-        return {
-          ...v,
-          scenarios: v.scenarios.map((s) => (s.id === scenarioId ? { ...s, ...patch } : s)),
-        };
-      }),
-    }));
-  };
-
-  const addTreatment = () => {
-    if (!selectedScenario) return;
-    const t = emptyTreatment();
-    setScenario(selectedScenario.id, { treatments: [...selectedScenario.treatments, t] });
-  };
-
-  const updateTreatment = (treatmentId, patch) => {
-    if (!selectedScenario) return;
-    setScenario(selectedScenario.id, {
-      treatments: selectedScenario.treatments.map((t) => (t.id === treatmentId ? { ...t, ...patch } : t)),
-    });
-  };
-
-  const deleteTreatment = (treatmentId) => {
-    if (!selectedScenario) return;
-    setScenario(selectedScenario.id, { treatments: selectedScenario.treatments.filter((t) => t.id !== treatmentId) });
-  };
-
   const resetTrainingData = () => {
     if (typeof window !== "undefined") window.localStorage.removeItem(LS_KEY);
     setState({ vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" });
     setActiveView("Vendors");
   };
 
-  // ------------------------------
-  // Semi-guided helpers
-  // ------------------------------
+  // ---------------------------------------------
+  // Quality checks
+  // ---------------------------------------------
 
   const vendorQuality = useMemo(() => {
     if (!selectedVendor) return [];
@@ -315,104 +476,223 @@ export default function Page() {
   const scenarioQuality = useMemo(() => {
     if (!selectedScenario) return [];
     const issues = [];
+    if (!selectedScenario.title.trim()) issues.push("Scenario title is missing.");
     if (!selectedScenario.assetAtRisk.trim()) issues.push("Asset at risk is missing.");
     if (!selectedScenario.lossEvent.trim()) issues.push("Loss event is missing.");
-    if (!selectedScenario.threatEvent.trim()) issues.push("Threat event is missing.");
-    if (!selectedScenario.primaryLossTypes.trim()) issues.push("Primary loss types are missing.");
-    if (!selectedScenario.title.trim()) issues.push("Scenario title is missing.");
-    // Semi-guided: warn about generic title
-    if (selectedScenario.title.trim() && selectedScenario.title.trim().length < 8) {
-      issues.push("Scenario title looks too short. Make it specific.");
-    }
+    if (!selectedScenario.attackVector.trim()) issues.push("Attack vector is missing.");
     return issues;
   }, [selectedScenario]);
 
-  const quantQuality = useMemo(() => {
-    if (!selectedScenario) return [];
-    const issues = [];
-    const anyInput =
-      selectedScenario.tefLow || selectedScenario.tefHigh || selectedScenario.suscLow || selectedScenario.suscHigh || selectedScenario.lmPrimary || selectedScenario.lmSecondary;
-    if (!anyInput) issues.push("No input ranges captured yet (TEF, susceptibility, loss magnitude). ");
-    if (!selectedScenario.assumptions.trim()) issues.push("Key assumptions are missing.");
-    const anyOutput = selectedScenario.eal || selectedScenario.p90 || selectedScenario.p95;
-    if (!anyOutput) issues.push("No outputs captured yet (EAL, P90, P95). ");
-    if (!selectedScenario.drivers.trim()) issues.push("Key risk drivers are missing.");
-    return issues;
-  }, [selectedScenario]);
+  // ---------------------------------------------
+  // Tiering
+  // ---------------------------------------------
 
-  const treatmentQuality = useMemo(() => {
-    if (!selectedScenario) return [];
-    const issues = [];
-    if (!selectedScenario.treatments.length) issues.push("No treatment options captured yet.");
-    const weak = selectedScenario.treatments.filter((t) => !t.control.trim() || !t.annualCost || !t.annualRiskReduction);
-    if (weak.length) issues.push("Some treatments are missing control, cost, or risk reduction.");
-    return issues;
-  }, [selectedScenario]);
-
-  const decisionQuality = useMemo(() => {
-    if (!selectedScenario) return [];
-    const issues = [];
-    const d = selectedScenario.decision;
-    if (!d.status) issues.push("Decision status is missing.");
-    if (!d.owner.trim()) issues.push("Decision owner is missing.");
-    if (!d.reviewDate.trim()) issues.push("Review date is missing.");
-    if (!d.rationale.trim()) issues.push("Decision rationale is missing.");
-    return issues;
-  }, [selectedScenario]);
-
-  // Simple tiering (training-only). Not FAIR. This is intake prioritization.
-  const computeTier = (v) => {
-    let score = 0;
-    const dep = v.dependencyLevel;
-    if (dep === "High") score += 3;
-    if (dep === "Medium") score += 2;
-    if (dep === "Low") score += 1;
-    const data = (v.dataTypes || "").toLowerCase();
-    if (data.includes("pii") || data.includes("personal")) score += 3;
-    if (data.includes("payment") || data.includes("card")) score += 3;
-    if (data.includes("health") || data.includes("phi")) score += 3;
-    const fn = (v.criticalFunction || "").toLowerCase();
-    if (fn.includes("revenue") || fn.includes("sales") || fn.includes("payments")) score += 2;
-    if (fn.includes("production") || fn.includes("operations")) score += 2;
-
-    if (score >= 7) return { tier: "High", rationale: "High dependency and/or sensitive data/business impact." };
-    if (score >= 4) return { tier: "Medium", rationale: "Meaningful dependency with moderate sensitivity/impact." };
-    return { tier: "Low", rationale: "Limited dependency and lower sensitivity/impact." };
+  const recomputeTierFromIndex = (idx) => {
+    if (idx >= 400) return { tier: "High", rationale: "High composite score across filtering criteria." };
+    if (idx >= 120) return { tier: "Medium", rationale: "Moderate composite score across filtering criteria." };
+    return { tier: "Low", rationale: "Low composite score across filtering criteria." };
   };
 
-  // ------------------------------
-  // Portfolio aggregates
-  // ------------------------------
+  const autoSelectTop2ForQuant = () => {
+    const rows = vendors
+      .map((v) => ({ id: v.id, name: v.name || "(Unnamed vendor)", idx: tierIndex(v.tiering || emptyTiering()) }))
+      .sort((a, b) => b.idx - a.idx);
+    const top2 = new Set(rows.slice(0, 2).map((r) => r.id));
+    setState((prev) => ({
+      ...prev,
+      vendors: prev.vendors.map((v) => ({ ...v, carryForward: top2.has(v.id) })),
+    }));
+  };
+
+  // ---------------------------------------------
+  // Quantification engine (Monte Carlo)
+  // ---------------------------------------------
+
+  const [runState, setRunState] = useState({ running: false, done: 0, total: 0, label: "" });
+  const runCancelRef = useRef({ cancelled: false });
+
+  const computeDrivers = (q) => {
+    const tefML = Number(q.tef.ml) || 0;
+    const suscML = (Number(q.susc.ml) || 0) / 100;
+    const pelML = Number(q.pel.ml) || 0;
+    // crude driver weight (for training)
+    const d = [
+      { k: "TEF", v: tefML },
+      { k: "Susceptibility", v: suscML },
+      { k: "Per-event loss", v: pelML / 100000 },
+    ].sort((a, b) => b.v - a.v);
+    return d.map((x) => x.k);
+  };
+
+  const suggestTreatmentsFromDrivers = (q) => {
+    const d = computeDrivers(q);
+    const out = [];
+    if (d.includes("Susceptibility")) {
+      const t = emptyTreatment("Reduce susceptibility");
+      t.title = "Improve vendor access controls / MFA / least privilege";
+      t.effectPct = 30;
+      out.push(t);
+    }
+    if (d.includes("TEF")) {
+      const t = emptyTreatment("Reduce TEF");
+      t.title = "Reduce exposure surface (network segmentation, hardening, monitoring)";
+      t.effectPct = 20;
+      out.push(t);
+    }
+    if (d.includes("Per-event loss")) {
+      const t = emptyTreatment("Reduce loss magnitude");
+      t.title = "Limit blast radius (tokenization, encryption, backups, incident playbooks)";
+      t.effectPct = 25;
+      out.push(t);
+    }
+    if (!out.length) {
+      const t = emptyTreatment("Reduce susceptibility");
+      t.title = "Baseline hardening";
+      out.push(t);
+    }
+    return out;
+  };
+
+  const runMonteCarlo = async () => {
+    if (!selectedScenario) return;
+    const q = selectedScenario.quant;
+
+    const sims = Math.max(1000, Math.min(200000, Number(q.sims) || 10000));
+
+    const tef = summarizeTriad(q.tef.min, q.tef.ml, q.tef.max);
+    const susc = summarizeTriad(q.susc.min, q.susc.ml, q.susc.max);
+    const pel = summarizeTriad(q.pel.min, q.pel.ml, q.pel.max);
+
+    // basic validation
+    const errs = [];
+    if (!(tef.min && tef.ml && tef.max)) errs.push("TEF min/ML/max");
+    if (!(susc.min && susc.ml && susc.max)) errs.push("Susceptibility min/ML/max");
+    if (!(pel.min && pel.ml && pel.max)) errs.push("Per-event loss min/ML/max");
+
+    if (errs.length) {
+      alert(`Missing inputs: ${errs.join(", ")}`);
+      return;
+    }
+
+    runCancelRef.current.cancelled = false;
+    setRunState({ running: true, done: 0, total: sims, label: `Running ${sims.toLocaleString()} simulations…` });
+
+    const ale = [];
+    const pelSamples = [];
+
+    // chunked loop to keep UI responsive
+    const chunk = 400;
+    let done = 0;
+
+    while (done < sims) {
+      if (runCancelRef.current.cancelled) break;
+      const n = Math.min(chunk, sims - done);
+
+      for (let i = 0; i < n; i++) {
+        // sample TEF and Susc → LEF
+        const tefS = Math.max(0, triangularSample(tef.min, tef.ml, tef.max));
+        const suscS = clamp01(triangularSample(susc.min, susc.ml, susc.max) / 100);
+        const lef = tefS * suscS;
+
+        // frequency per year: model as Poisson with lambda = LEF
+        const k = poisson(Math.max(0, lef));
+
+        let annualLoss = 0;
+        for (let e = 0; e < k; e++) {
+          const perEvent = Math.max(0, triangularSample(pel.min, pel.ml, pel.max));
+          annualLoss += perEvent;
+          pelSamples.push(perEvent);
+        }
+        ale.push(annualLoss);
+      }
+
+      done += n;
+      setRunState({ running: true, done, total: sims, label: `Running ${sims.toLocaleString()} simulations… (${done.toLocaleString()}/${sims.toLocaleString()})` });
+      // yield
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    const p10 = quantile(ale, 0.1);
+    const p90 = quantile(ale, 0.9);
+
+    const stats = {
+      ale: {
+        min: quantile(ale, 0.01),
+        ml: quantile(ale, 0.5),
+        max: quantile(ale, 0.99),
+        p10,
+        p90,
+      },
+      pel: {
+        min: quantile(pelSamples, 0.01),
+        ml: quantile(pelSamples, 0.5),
+        max: quantile(pelSamples, 0.99),
+        p10: quantile(pelSamples, 0.1),
+        p90: quantile(pelSamples, 0.9),
+      },
+    };
+
+    const now = new Date().toISOString();
+
+    // auto treatments suggestion (only if none yet)
+    const existing = selectedScenario.treatments || [];
+    const suggested = existing.length ? existing : suggestTreatmentsFromDrivers(q);
+
+    setScenario(selectedScenario.id, {
+      quant: {
+        ...q,
+        sims,
+        lastRunAt: now,
+        aleSamples: ale,
+        pelSamples,
+        stats,
+      },
+      treatments: suggested,
+    });
+
+    setRunState({ running: false, done: sims, total: sims, label: "Simulation complete." });
+  };
+
+  const cancelRun = () => {
+    runCancelRef.current.cancelled = true;
+    setRunState((p) => ({ ...p, running: false, label: "Cancelled." }));
+  };
+
+  // ---------------------------------------------
+  // Portfolio
+  // ---------------------------------------------
 
   const portfolio = useMemo(() => {
-    const rows = [];
-    for (const v of vendors) {
-      const vendorEal = v.scenarios.reduce((sum, s) => sum + (Number(s.eal) || 0), 0);
-      rows.push({ vendorId: v.id, vendorName: v.name || "(Unnamed vendor)", eal: vendorEal });
-    }
-    rows.sort((a, b) => b.eal - a.eal);
-    const totalEal = rows.reduce((sum, r) => sum + r.eal, 0);
-    const topScenarios = [];
+    const vendorRows = vendors
+      .map((v) => {
+        const idx = tierIndex(v.tiering || emptyTiering());
+        const vendorAle = v.scenarios.reduce((sum, s) => sum + (Number(s.quant?.stats?.ale?.ml) || 0), 0);
+        return { vendorId: v.id, vendorName: v.name || "(Unnamed vendor)", idx, ale: vendorAle, carryForward: !!v.carryForward };
+      })
+      .sort((a, b) => b.idx - a.idx);
+
+    const scenRows = [];
     for (const v of vendors) {
       for (const s of v.scenarios) {
-        const val = Number(s.eal) || 0;
-        topScenarios.push({
+        scenRows.push({
           label: `${v.name || "(Vendor)"} · ${s.title || "(Scenario)"}`,
-          value: val,
+          aleML: Number(s.quant?.stats?.ale?.ml) || 0,
+          p90: Number(s.quant?.stats?.ale?.p90) || 0,
+          decision: s.decision?.status || "",
         });
       }
     }
-    topScenarios.sort((a, b) => b.value - a.value);
+    scenRows.sort((a, b) => b.aleML - a.aleML);
+
     return {
-      totalEal,
-      topVendors: rows.slice(0, 8),
-      topScenarios: topScenarios.slice(0, 8),
+      vendorRows,
+      scenRows,
     };
   }, [vendors]);
 
-  // ------------------------------
+  // ---------------------------------------------
   // Exports
-  // ------------------------------
+  // ---------------------------------------------
 
   const exportExcel = () => {
     const wb = XLSX.utils.book_new();
@@ -428,6 +708,13 @@ export default function Page() {
       DependencyLevel: v.dependencyLevel,
       Tier: v.tier,
       TierRationale: v.tierRationale,
+      CarryForward: v.carryForward ? "Yes" : "No",
+      DataSensitivity: v.tiering?.dataSensitivity,
+      IntegrationDepth: v.tiering?.integrationDepth,
+      AccessPrivileges: v.tiering?.accessPrivileges,
+      HistoricalIncidents: v.tiering?.historicalIncidents,
+      BusinessCriticality: v.tiering?.businessCriticality,
+      PrioritizationIndex: tierIndex(v.tiering || emptyTiering()),
     }));
 
     const scenarioRows = vendors.flatMap((v) =>
@@ -437,36 +724,18 @@ export default function Page() {
         Title: s.title,
         AssetAtRisk: s.assetAtRisk,
         ThreatActor: s.threatActor,
-        ThreatEvent: s.threatEvent,
+        AttackVector: s.attackVector,
         LossEvent: s.lossEvent,
-        PrimaryLossTypes: s.primaryLossTypes,
-        SecondaryLossTypes: s.secondaryLossTypes,
         Narrative: s.narrative,
-      }))
-    );
-
-    const inputRows = vendors.flatMap((v) =>
-      v.scenarios.map((s) => ({
-        VendorName: v.name,
-        ScenarioID: s.id,
-        TEF_Low: s.tefLow,
-        TEF_High: s.tefHigh,
-        Susc_Low: s.suscLow,
-        Susc_High: s.suscHigh,
-        LM_Primary: s.lmPrimary,
-        LM_Secondary: s.lmSecondary,
         Assumptions: s.assumptions,
-      }))
-    );
-
-    const resultRows = vendors.flatMap((v) =>
-      v.scenarios.map((s) => ({
-        VendorName: v.name,
-        ScenarioID: s.id,
-        EAL: s.eal,
-        P90: s.p90,
-        P95: s.p95,
-        Drivers: s.drivers,
+        Sims: s.quant?.sims,
+        ALE_ML: s.quant?.stats?.ale?.ml,
+        ALE_P10: s.quant?.stats?.ale?.p10,
+        ALE_P90: s.quant?.stats?.ale?.p90,
+        PEL_ML: s.quant?.stats?.pel?.ml,
+        Decision: s.decision?.status,
+        Owner: s.decision?.owner,
+        ReviewDate: s.decision?.reviewDate,
       }))
     );
 
@@ -474,55 +743,38 @@ export default function Page() {
       v.scenarios.flatMap((s) =>
         (s.treatments || []).map((t) => ({
           VendorName: v.name,
-          ScenarioID: s.id,
           ScenarioTitle: s.title,
-          TreatmentType: t.type,
-          Control: t.control,
+          TreatmentKind: t.kind,
+          Title: t.title,
+          Owner: t.owner,
           AnnualCost: t.annualCost,
-          AnnualRiskReduction: t.annualRiskReduction,
-          ResidualEAL: t.residualEal,
+          EffectPct: t.effectPct,
         }))
       )
     );
 
-    const decisionRows = vendors.flatMap((v) =>
-      v.scenarios.map((s) => ({
-        VendorName: v.name,
-        ScenarioID: s.id,
-        ScenarioTitle: s.title,
-        Decision: s.decision?.status,
-        Owner: s.decision?.owner,
-        Approver: s.decision?.approver,
-        ReviewDate: s.decision?.reviewDate,
-        Rationale: s.decision?.rationale,
-      }))
-    );
-
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(vendorRows), "Vendors");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(scenarioRows), "Scenarios");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(inputRows), "FAIR Inputs");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resultRows), "FAIR Results");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(treatmentRows), "Treatments");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(decisionRows), "Decisions");
 
-    XLSX.writeFile(wb, `FAIR_TPRM_Training_Export.xlsx`);
+    XLSX.writeFile(wb, "FAIR_TPRM_Training_Export.xlsx");
   };
 
   const exportPDF = () => {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
     doc.setFontSize(18);
-    doc.text("FAIR-Based TPRM Training Report", 40, 50);
+    doc.text("FAIR TPRM Training Report", 40, 50);
 
     doc.setFontSize(11);
     doc.setTextColor(90);
-    doc.text(`Portfolio EAL (sum of scenarios): ${money(portfolio.totalEal)}`, 40, 70);
+    doc.text(`Vendors: ${vendors.length}  |  Scenarios: ${vendors.reduce((n, v) => n + v.scenarios.length, 0)}`, 40, 70);
     doc.setTextColor(0);
 
     autoTable(doc, {
       startY: 90,
-      head: [["Top vendors (by EAL)", "EAL"]],
-      body: portfolio.topVendors.map((r) => [r.vendorName, money(r.eal)]),
+      head: [["Vendor", "Prioritization index", "Carry forward", "ALE (median)" ]],
+      body: portfolio.vendorRows.slice(0, 10).map((r) => [r.vendorName, String(r.idx), r.carryForward ? "Yes" : "No", money(r.ale)]),
       styles: { fontSize: 10 },
       headStyles: { fillColor: [30, 41, 59] },
       margin: { left: 40, right: 40 },
@@ -530,61 +782,19 @@ export default function Page() {
 
     autoTable(doc, {
       startY: doc.lastAutoTable.finalY + 18,
-      head: [["Top scenarios (by EAL)", "EAL"]],
-      body: portfolio.topScenarios.map((r) => [r.label, money(r.value)]),
-      styles: { fontSize: 10 },
+      head: [["Scenario", "ALE (median)", "P90", "Decision"]],
+      body: portfolio.scenRows.slice(0, 12).map((r) => [r.label, money(r.aleML), money(r.p90), r.decision || "" ]),
+      styles: { fontSize: 9 },
       headStyles: { fillColor: [30, 41, 59] },
       margin: { left: 40, right: 40 },
     });
 
-    // Vendor-by-vendor details
-    for (const v of vendors) {
-      doc.addPage();
-      doc.setFontSize(16);
-      doc.text(`Vendor: ${v.name || "(Unnamed)"}`, 40, 50);
-
-      autoTable(doc, {
-        startY: 70,
-        head: [["Field", "Value"]],
-        body: [
-          ["Category", v.category],
-          ["Business owner", v.businessOwner],
-          ["Critical function", v.criticalFunction],
-          ["Data types", v.dataTypes],
-          ["Geography", v.geography],
-          ["Dependency", v.dependencyLevel],
-          ["Tier", v.tier],
-          ["Tier rationale", v.tierRationale],
-        ],
-        styles: { fontSize: 10 },
-        headStyles: { fillColor: [30, 41, 59] },
-        margin: { left: 40, right: 40 },
-      });
-
-      const scenarioSummary = v.scenarios.map((s) => [
-        s.title || "(Scenario)",
-        money(Number(s.eal) || 0),
-        money(Number(s.p90) || 0),
-        (s.drivers || "").slice(0, 60),
-        s.decision?.status || "",
-      ]);
-
-      autoTable(doc, {
-        startY: doc.lastAutoTable.finalY + 18,
-        head: [["Scenario", "EAL", "P90", "Top drivers", "Decision"]],
-        body: scenarioSummary.length ? scenarioSummary : [["No scenarios", "", "", "", ""]],
-        styles: { fontSize: 9 },
-        headStyles: { fillColor: [30, 41, 59] },
-        margin: { left: 40, right: 40 },
-      });
-    }
-
     doc.save("FAIR_TPRM_Training_Report.pdf");
   };
 
-  // ------------------------------
-  // UI
-  // ------------------------------
+  // ---------------------------------------------
+  // Views
+  // ---------------------------------------------
 
   const nav = [
     { k: "Vendors", label: "Vendors" },
@@ -593,9 +803,20 @@ export default function Page() {
     { k: "Quantify", label: "Quantify" },
     { k: "Treatments", label: "Treatments" },
     { k: "Decisions", label: "Decisions" },
-    { k: "Portfolio", label: "Portfolio" },
+    { k: "Dashboard", label: "Dashboard" },
     { k: "Reports", label: "Reports" },
   ];
+
+  const stepActions = (
+    <>
+      <button className="btn" onClick={addVendor}>Add vendor</button>
+      <button className="btn" onClick={addScenario} disabled={!selectedVendor}>Add scenario</button>
+      <button className="btn" onClick={() => setActiveView("Tiering")} disabled={!selectedVendor}>Tier vendor</button>
+      <button className="btn" onClick={() => setActiveView("Quantify")} disabled={!selectedScenario}>Quantify</button>
+      <button className="btn" onClick={() => setActiveView("Treatments")} disabled={!selectedScenario}>Treat</button>
+      <button className="btn primary" onClick={() => setActiveView("Decisions")} disabled={!selectedScenario}>Decide</button>
+    </>
+  );
 
   return (
     <div className="container">
@@ -603,125 +824,116 @@ export default function Page() {
         <div>
           <h1 className="h-title">FAIR TPRM Training Tool</h1>
           <p className="h-sub">
-            Semi-guided workflow for third-party risk governance using FAIR concepts. Training only, data stays in your browser.
+            Guided flow for third-party risk governance using FAIR concepts. Training only — data stays in your browser.
           </p>
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Pill>{vendors.length} vendor(s)</Pill>
             <Pill>{vendors.reduce((n, v) => n + v.scenarios.length, 0)} scenario(s)</Pill>
-            <Pill>Portfolio EAL: {money(portfolio.totalEal)}</Pill>
+            <Pill>Carry-forward: {vendors.filter((v) => v.carryForward).length}</Pill>
           </div>
         </div>
 
         <div className="actions">
           <button className="btn" onClick={exportExcel}>Export Excel</button>
           <button className="btn primary" onClick={exportPDF}>Export PDF</button>
-          <button className="btn" onClick={resetTrainingData}>Reset training data</button>
+          <button className="btn" onClick={resetTrainingData}>Reset</button>
         </div>
       </div>
 
-      <div className="tabs" style={{ gridTemplateColumns: "repeat(8, minmax(0, 1fr))" }}>
-        {nav.map((t) => (
-          <button
-            key={t.k}
-            className={`tab ${activeView === t.k ? "active" : ""}`}
-            onClick={() => setActiveView(t.k)}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+        <div className="tabs" style={{ gridTemplateColumns: "repeat(8, minmax(0, 1fr))", flex: 1 }}>
+          {nav.map((t) => (
+            <button key={t.k} className={`tab ${activeView === t.k ? "active" : ""}`} onClick={() => setActiveView(t.k)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{stepActions}</div>
       </div>
 
       <div className="grid" style={{ marginTop: 14 }}>
-        {/* Left: Vendor + Scenario selectors */}
+        {/* Left: Workspace */}
         <div className="col6">
           <div className="card card-pad">
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-              <div style={{ fontSize: 14, fontWeight: 900 }}>Workspace</div>
-              <button className="btn" onClick={addVendor}>Add vendor</button>
-            </div>
+            <SectionTitle
+              title="Workspace"
+              subtitle="Pick a vendor and scenario, then use the step buttons above."
+              right={null}
+            />
 
-            <div style={{ marginTop: 12 }}>
-              <div className="label">Select vendor</div>
-              <select
-                className="input"
-                value={selectedVendor?.id || ""}
-                onChange={(e) => setState((prev) => ({ ...prev, selectedVendorId: e.target.value, selectedScenarioId: "" }))}
-              >
-                {vendors.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name ? v.name : "(Unnamed vendor)"}
-                  </option>
-                ))}
-              </select>
-
-              {selectedVendor ? (
-                <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Pill>{selectedVendor.category}</Pill>
-                  <Pill>Dependency: {selectedVendor.dependencyLevel}</Pill>
-                  <Pill>Tier: {selectedVendor.tier || "Not set"}</Pill>
-                  <button
-                    className="btn"
-                    onClick={() => deleteVendor(selectedVendor.id)}
-                    style={{ marginLeft: "auto" }}
-                  >
-                    Delete vendor
-                  </button>
-                </div>
-              ) : null}
-
-              <div style={{ marginTop: 14, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                <div style={{ fontSize: 13, fontWeight: 800 }}>Scenarios</div>
-                <button className="btn" onClick={addScenario} disabled={!selectedVendor}>Add scenario</button>
-              </div>
-
-              <div style={{ marginTop: 10 }}>
-                <div className="label">Select scenario</div>
+            <div className="grid">
+              <div className="col12">
+                <div className="label">Select vendor</div>
                 <select
                   className="input"
-                  value={selectedScenario?.id || ""}
-                  onChange={(e) => setState((prev) => ({ ...prev, selectedScenarioId: e.target.value }))}
-                  disabled={!selectedVendor || !selectedVendor.scenarios.length}
+                  value={selectedVendor?.id || ""}
+                  onChange={(e) => setState((prev) => ({ ...prev, selectedVendorId: e.target.value, selectedScenarioId: "" }))}
                 >
-                  {(selectedVendor?.scenarios || []).map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.title ? s.title : "(Untitled scenario)"}
+                  {vendors.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name ? v.name : "(Unnamed vendor)"}
                     </option>
                   ))}
                 </select>
 
-                {selectedScenario ? (
-                  <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <Pill>EAL: {money(Number(selectedScenario.eal) || 0)}</Pill>
-                    <Pill>P90: {money(Number(selectedScenario.p90) || 0)}</Pill>
-                    <button
-                      className="btn"
-                      onClick={() => deleteScenario(selectedScenario.id)}
-                      style={{ marginLeft: "auto" }}
-                    >
-                      Delete scenario
+                {selectedVendor ? (
+                  <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <Pill>{selectedVendor.category}</Pill>
+                    <Pill>Tier: {selectedVendor.tier || "Not set"}</Pill>
+                    <Pill>Index: {tierIndex(selectedVendor.tiering || emptyTiering())}</Pill>
+                    <Pill>{selectedVendor.carryForward ? "Carry-forward: Yes" : "Carry-forward: No"}</Pill>
+                    <button className="btn" onClick={() => deleteVendor(selectedVendor.id)} style={{ marginLeft: "auto" }}>
+                      Delete vendor
                     </button>
                   </div>
                 ) : null}
               </div>
+
+              <div className="col12" style={{ marginTop: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 900 }}>Scenarios</div>
+                  <button className="btn" onClick={addScenario} disabled={!selectedVendor}>Add scenario</button>
+                </div>
+
+                <div style={{ marginTop: 10 }}>
+                  <div className="label">Select scenario</div>
+                  <select
+                    className="input"
+                    value={selectedScenario?.id || ""}
+                    onChange={(e) => setState((prev) => ({ ...prev, selectedScenarioId: e.target.value }))}
+                    disabled={!selectedVendor || !selectedVendor.scenarios.length}
+                  >
+                    {(selectedVendor?.scenarios || []).map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.title ? s.title : "(Untitled scenario)"}
+                      </option>
+                    ))}
+                  </select>
+
+                  {selectedScenario ? (
+                    <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <Pill>ALE (median): {money(Number(selectedScenario.quant?.stats?.ale?.ml) || 0)}</Pill>
+                      <Pill>P90: {money(Number(selectedScenario.quant?.stats?.ale?.p90) || 0)}</Pill>
+                      <Pill>Decision: {selectedScenario.decision?.status || "—"}</Pill>
+                      <button className="btn" onClick={() => deleteScenario(selectedScenario.id)} style={{ marginLeft: "auto" }}>
+                        Delete scenario
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Semi-guided quality hints */}
           {activeView === "Vendors" ? <QualityBanner items={vendorQuality} /> : null}
           {activeView === "Scenarios" ? <QualityBanner items={scenarioQuality} /> : null}
-          {activeView === "Quantify" ? <QualityBanner items={quantQuality} /> : null}
-          {activeView === "Treatments" ? <QualityBanner items={treatmentQuality} /> : null}
-          {activeView === "Decisions" ? <QualityBanner items={decisionQuality} /> : null}
         </div>
 
         {/* Right: Active view */}
         <div className="col6">
           {activeView === "Vendors" && selectedVendor ? (
             <div className="card card-pad">
-              <SectionTitle
-                title="Vendor intake and context"
-                subtitle="Capture business context first. This is TPRM intake, not FAIR quantification."
-              />
+              <SectionTitle title="Vendor intake" subtitle="Capture context first (TPRM intake)." right={null} />
 
               <div className="grid">
                 <div className="col6">
@@ -730,11 +942,7 @@ export default function Page() {
                 </div>
                 <div className="col6">
                   <div className="label">Category</div>
-                  <Select
-                    value={selectedVendor.category}
-                    onChange={(val) => setVendor(selectedVendor.id, { category: val })}
-                    options={["SaaS", "Cloud", "MSP", "Payment", "Data processor", "AI provider", "Other"]}
-                  />
+                  <Select value={selectedVendor.category} onChange={(val) => setVendor(selectedVendor.id, { category: val })} options={["SaaS", "Cloud", "MSP", "Payment", "Data processor", "AI provider", "Other"]} />
                 </div>
 
                 <div className="col6">
@@ -755,264 +963,68 @@ export default function Page() {
                   <div className="label">Data types accessed or processed</div>
                   <textarea className="textarea" value={selectedVendor.dataTypes} onChange={(e) => setVendor(selectedVendor.id, { dataTypes: e.target.value })} placeholder="Example: Customer PII, order history, support tickets" />
                 </div>
-
-                <div className="col6">
-                  <div className="label">Dependency level</div>
-                  <Select value={selectedVendor.dependencyLevel} onChange={(val) => setVendor(selectedVendor.id, { dependencyLevel: val })} options={["High", "Medium", "Low"]} />
-                </div>
-                <div className="col6" style={{ display: "flex", alignItems: "flex-end" }}>
-                  <button
-                    className="btn primary"
-                    onClick={() => {
-                      const out = computeTier(selectedVendor);
-                      setVendor(selectedVendor.id, { tier: out.tier, tierRationale: out.rationale });
-                      setActiveView("Tiering");
-                    }}
-                  >
-                    Compute tier
-                  </button>
-                </div>
-              </div>
-
-              <div className="hint">Semi-guided rule: if you cannot explain why this vendor matters, do not quantify yet.</div>
-            </div>
-          ) : null}
-
-          {activeView === "Tiering" && selectedVendor ? (
-            <div className="card card-pad">
-              <SectionTitle
-                title="Tiering and prioritization"
-                subtitle="Tiering helps you decide where FAIR analysis is worth the effort. It is not a FAIR output."
-              />
-
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <Pill>Vendor: {selectedVendor.name || "(Unnamed)"}</Pill>
-                <Pill>Tier: {selectedVendor.tier || "Not set"}</Pill>
-              </div>
-
-              <div style={{ marginTop: 12 }} className="hint">
-                <div style={{ fontWeight: 800, color: "rgba(255,255,255,0.92)" }}>Decision question</div>
-                <div style={{ marginTop: 6 }}>
-                  Should we quantify this vendor with FAIR now, based on material exposure and decision urgency?
-                </div>
-              </div>
-
-              <div style={{ marginTop: 12 }}>
-                <div className="label">Tier rationale</div>
-                see how the tool computed it, then rewrite it in your own words.
-              </div>
-
-              <textarea
-                className="textarea"
-                value={selectedVendor.tierRationale}
-                onChange={(e) => setVendor(selectedVendor.id, { tierRationale: e.target.value })}
-                placeholder="Write a short rationale that a business leader would accept."
-              />
-
-              <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button className="btn" onClick={() => setActiveView("Scenarios")}>Go to scenarios</button>
-                <button className="btn primary" onClick={() => setActiveView("Quantify")}>Go to quantification</button>
-              </div>
-            </div>
-          ) : null}
-
-          {activeView === "Scenarios" && selectedScenario ? (
-            <div className="card card-pad">
-              <SectionTitle
-                title="Scenario definition"
-                subtitle="A good scenario is specific, testable, and defensible. Avoid generic risk statements."
-              />
-
-              <div className="grid">
-                <div className="col12">
-                  <div className="label">Scenario title</div>
-                  <input className="input" value={selectedScenario.title} onChange={(e) => setScenario(selectedScenario.id, { title: e.target.value })} placeholder="Example: CRM vendor credential compromise leading to PII exfiltration" />
-                </div>
-                <div className="col6">
-                  <div className="label">Asset at risk</div>
-                  <input className="input" value={selectedScenario.assetAtRisk} onChange={(e) => setScenario(selectedScenario.id, { assetAtRisk: e.target.value })} placeholder="Example: Customer PII in CRM" />
-                </div>
-                <div className="col6">
-                  <div className="label">Threat actor</div>
-                  <input className="input" value={selectedScenario.threatActor} onChange={(e) => setScenario(selectedScenario.id, { threatActor: e.target.value })} />
-                </div>
-                <div className="col6">
-                  <div className="label">Threat event</div>
-                  <input className="input" value={selectedScenario.threatEvent} onChange={(e) => setScenario(selectedScenario.id, { threatEvent: e.target.value })} placeholder="Example: Credential compromise" />
-                </div>
-                <div className="col6">
-                  <div className="label">Loss event</div>
-                  <input className="input" value={selectedScenario.lossEvent} onChange={(e) => setScenario(selectedScenario.id, { lossEvent: e.target.value })} placeholder="Example: Unauthorized data exfiltration" />
-                </div>
-                <div className="col6">
-                  <div className="label">Primary loss types</div>
-                  <input className="input" value={selectedScenario.primaryLossTypes} onChange={(e) => setScenario(selectedScenario.id, { primaryLossTypes: e.target.value })} placeholder="Response, replacement, productivity, fines" />
-                </div>
-                <div className="col6">
-                  <div className="label">Secondary loss types</div>
-                  <input className="input" value={selectedScenario.secondaryLossTypes} onChange={(e) => setScenario(selectedScenario.id, { secondaryLossTypes: e.target.value })} placeholder="Regulatory, legal, reputation" />
-                </div>
-                <div className="col12">
-                  <div className="label">Narrative (2 to 4 sentences)</div>
-                  <textarea className="textarea" value={selectedScenario.narrative} onChange={(e) => setScenario(selectedScenario.id, { narrative: e.target.value })} placeholder="Describe what happens, who is affected, and why it matters." />
-                </div>
               </div>
 
               <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button className="btn" onClick={() => setActiveView("Quantify")}>Go to quantification</button>
+                <button className="btn" onClick={() => setActiveView("Tiering")}>Go to tiering</button>
+                <button className="btn primary" onClick={addScenario}>Add scenario</button>
               </div>
-
-              <div className="hint">Semi-guided rule: if the scenario could apply to any vendor, it is too generic.</div>
             </div>
           ) : null}
 
-          {activeView === "Quantify" && selectedScenario ? (
+          {activeView === "Tiering" ? (
             <div className="card card-pad">
               <SectionTitle
-                title="FAIR quantification"
-                subtitle="Capture input ranges, assumptions, and the key outputs you will use to make decisions."
+                title="Tiering matrix"
+                subtitle="Rate each vendor 1 (low) → 5 (high). Multiply to get a prioritization index. Select the top 2 to carry forward."
+                right={
+                  <>
+                    <button className="btn" onClick={autoSelectTop2ForQuant}>Auto-select top 2</button>
+                    <button className="btn primary" onClick={() => setActiveView("Quantify")} disabled={!selectedScenario}>Go to quantification</button>
+                  </>
+                }
               />
 
-              <div className="grid">
-                <div className="col12">
-                  <div className="label">Key assumptions</div>
-                  <textarea className="textarea" value={selectedScenario.assumptions} onChange={(e) => setScenario(selectedScenario.id, { assumptions: e.target.value })} placeholder="Example: weekly log review, detection 7 to 14 days, notification SLA 72h." />
-                </div>
-
-                <div className="col6">
-                  <div className="label">Threat event frequency low (per year)</div>
-                  <input className="input" value={selectedScenario.tefLow} onChange={(e) => setScenario(selectedScenario.id, { tefLow: e.target.value })} placeholder="Example: 1" />
-                </div>
-                <div className="col6">
-                  <div className="label">Threat event frequency high (per year)</div>
-                  <input className="input" value={selectedScenario.tefHigh} onChange={(e) => setScenario(selectedScenario.id, { tefHigh: e.target.value })} placeholder="Example: 6" />
-                </div>
-
-                <div className="col6">
-                  <div className="label">Susceptibility low (%)</div>
-                  <input className="input" value={selectedScenario.suscLow} onChange={(e) => setScenario(selectedScenario.id, { suscLow: e.target.value })} placeholder="Example: 5" />
-                </div>
-                <div className="col6">
-                  <div className="label">Susceptibility high (%)</div>
-                  <input className="input" value={selectedScenario.suscHigh} onChange={(e) => setScenario(selectedScenario.id, { suscHigh: e.target.value })} placeholder="Example: 25" />
-                </div>
-
-                <div className="col6">
-                  <div className="label">Loss magnitude primary (typical €)</div>
-                  <input className="input" value={selectedScenario.lmPrimary} onChange={(e) => setScenario(selectedScenario.id, { lmPrimary: e.target.value })} placeholder="Example: 250000" />
-                </div>
-                <div className="col6">
-                  <div className="label">Loss magnitude secondary (typical €)</div>
-                  <input className="input" value={selectedScenario.lmSecondary} onChange={(e) => setScenario(selectedScenario.id, { lmSecondary: e.target.value })} placeholder="Example: 500000" />
-                </div>
-
-                <div className="col6">
-                  <div className="label">Expected annual loss (EAL €)</div>
-                  <input className="input" value={selectedScenario.eal} onChange={(e) => setScenario(selectedScenario.id, { eal: e.target.value })} placeholder="Example: 420000" />
-                </div>
-                <div className="col6">
-                  <div className="label">90th percentile (P90 €)</div>
-                  <input className="input" value={selectedScenario.p90} onChange={(e) => setScenario(selectedScenario.id, { p90: e.target.value })} placeholder="Example: 1600000" />
-                </div>
-                <div className="col6">
-                  <div className="label">95th percentile (P95 €)</div>
-                  <input className="input" value={selectedScenario.p95} onChange={(e) => setScenario(selectedScenario.id, { p95: e.target.value })} placeholder="Example: 2400000" />
-                </div>
-
-                <div className="col12">
-                  <div className="label">Key risk drivers (plain language)</div>
-                  <textarea className="textarea" value={selectedScenario.drivers} onChange={(e) => setScenario(selectedScenario.id, { drivers: e.target.value })} placeholder="Example: weak privileged access controls, slow detection, high data volume, regulatory exposure." />
-                </div>
-              </div>
-
-              <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button className="btn" onClick={() => setActiveView("Treatments")}>Go to treatments</button>
-              </div>
-
-              <div className="hint">Semi-guided rule: outputs must be explainable via the drivers, not just numbers.</div>
-            </div>
-          ) : null}
-
-          {activeView === "Treatments" && selectedScenario ? (
-            <div className="card card-pad">
-              <SectionTitle
-                title="Treatment options"
-                subtitle="Translate controls into annual cost and annual risk reduction. Focus on the few options that move the needle."
-              />
-
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <Pill>Scenario: {selectedScenario.title || "(Untitled)"}</Pill>
-                  <Pill>Baseline EAL: {money(Number(selectedScenario.eal) || 0)}</Pill>
-                </div>
-                <button className="btn" onClick={addTreatment}>Add treatment</button>
-              </div>
-
-              <div style={{ marginTop: 12, overflowX: "auto" }}>
+              <div style={{ overflowX: "auto" }}>
                 <table className="table">
                   <thead>
                     <tr>
-                      <th>Type</th>
-                      <th>Control</th>
-                      <th>Annual cost (€)</th>
-                      <th>Annual risk reduction (€)</th>
-                      <th>Residual EAL (€)</th>
-                      <th style={{ textAlign: "right" }}>Actions</th>
+                      <th style={{ minWidth: 180 }}>Vendor</th>
+                      <th style={{ minWidth: 160 }}>Data sensitivity</th>
+                      <th style={{ minWidth: 160 }}>Integration depth</th>
+                      <th style={{ minWidth: 160 }}>Access privileges</th>
+                      <th style={{ minWidth: 160 }}>Historical incidents</th>
+                      <th style={{ minWidth: 160 }}>Business criticality</th>
+                      <th style={{ minWidth: 160 }}>Index (product)</th>
+                      <th style={{ minWidth: 160 }}>Carry forward</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedScenario.treatments.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} style={{ color: "rgba(255,255,255,0.65)" }}>No treatments captured yet.</td>
-                      </tr>
-                    ) : null}
-
-                    {selectedScenario.treatments.map((t) => {
-                      const cost = Number(t.annualCost) || 0;
-                      const rr = Number(t.annualRiskReduction) || 0;
-                      const roi = cost > 0 ? (rr / cost).toFixed(1) : "";
+                    {vendors.map((v) => {
+                      const t = v.tiering || emptyTiering();
+                      const idx = tierIndex(t);
                       return (
-                        <tr key={t.id}>
-                          <td style={{ minWidth: 160 }}>
-                            <Select
-                              value={t.type}
-                              onChange={(val) => updateTreatment(t.id, { type: val })}
-                              options={["Reduce TEF", "Reduce susceptibility", "Reduce loss magnitude", "Transfer", "Avoid"]}
-                            />
+                        <tr key={v.id}>
+                          <td>
+                            <div style={{ fontWeight: 800 }}>{v.name || "(Unnamed vendor)"}</div>
+                            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.65)" }}>{v.category} · {v.geography}</div>
                           </td>
-                          <td style={{ minWidth: 280 }}>
-                            <input className="input" value={t.control} onChange={(e) => updateTreatment(t.id, { control: e.target.value })} placeholder="Example: Enforce MFA for vendor admins" />
-                            {roi ? <div style={{ marginTop: 6, color: "rgba(255,255,255,0.70)", fontSize: 12 }}>ROI (simple): {roi}x</div> : null}
-                          </td>
-                          <td style={{ minWidth: 160 }}>
-                            <input className="input" value={t.annualCost} onChange={(e) => updateTreatment(t.id, { annualCost: e.target.value })} placeholder="40000" />                          </td>
-                          <td style={{ minWidth: 180 }}>
+                          <td><ScoreSelect value={t.dataSensitivity} onChange={(n) => setVendor(v.id, { tiering: { ...t, dataSensitivity: n } })} /></td>
+                          <td><ScoreSelect value={t.integrationDepth} onChange={(n) => setVendor(v.id, { tiering: { ...t, integrationDepth: n } })} /></td>
+                          <td><ScoreSelect value={t.accessPrivileges} onChange={(n) => setVendor(v.id, { tiering: { ...t, accessPrivileges: n } })} /></td>
+                          <td><ScoreSelect value={t.historicalIncidents} onChange={(n) => setVendor(v.id, { tiering: { ...t, historicalIncidents: n } })} /></td>
+                          <td><ScoreSelect value={t.businessCriticality} onChange={(n) => setVendor(v.id, { tiering: { ...t, businessCriticality: n } })} /></td>
+                          <td style={{ fontWeight: 900 }}>{idx}</td>
+                          <td>
                             <input
-                              className="input"
-                              value={t.annualRiskReduction}
-                              onChange={(e) =>
-                                updateTreatment(t.id, { annualRiskReduction: e.target.value })
-                              }
-                              placeholder="150000"
+                              type="checkbox"
+                              checked={!!v.carryForward}
+                              onChange={(e) => {
+                                const idx2 = tierIndex(t);
+                                const out = recomputeTierFromIndex(idx2);
+                                setVendor(v.id, { carryForward: e.target.checked, tier: out.tier, tierRationale: out.rationale });
+                              }}
                             />
-                          </td>
-                          <td style={{ minWidth: 160 }}>
-                            <input
-                              className="input"
-                              value={t.residualEal}
-                              onChange={(e) =>
-                                updateTreatment(t.id, { residualEal: e.target.value })
-                              }
-                              placeholder="270000"
-                            />
-                          </td>
-                          <td style={{ textAlign: "right" }}>
-                            <button
-                              className="btn"
-                              onClick={() => deleteTreatment(t.id)}
-                            >
-                              Delete
-                            </button>
                           </td>
                         </tr>
                       );
@@ -1021,24 +1033,347 @@ export default function Page() {
                 </table>
               </div>
 
-              <div className="hint">
-                Semi-guided rule: only propose treatments that materially change the decision.
-              </div>
+              {selectedVendor ? (
+                <div style={{ marginTop: 12 }} className="hint">
+                  <div style={{ fontWeight: 900, marginBottom: 6 }}>Selected vendor tier</div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <Pill>Vendor: {selectedVendor.name || "(Unnamed)"}</Pill>
+                    <Pill>Tier: {selectedVendor.tier || "Not set"}</Pill>
+                    <Pill>Index: {tierIndex(selectedVendor.tiering || emptyTiering())}</Pill>
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <div className="label">Tier rationale</div>
+                    <textarea className="textarea" value={selectedVendor.tierRationale} onChange={(e) => setVendor(selectedVendor.id, { tierRationale: e.target.value })} placeholder="Write a short rationale a business leader would accept." />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
-              <div style={{ marginTop: 12 }}>
-                <button className="btn primary" onClick={() => setActiveView("Decisions")}>
-                  Go to decision
-                </button>
+          {activeView === "Scenarios" && selectedScenario ? (
+            <div className="card card-pad">
+              <SectionTitle title="Scenario definition" subtitle="Keep it specific and defensible." right={
+                <>
+                  <button className="btn" onClick={addScenario}>Add scenario</button>
+                  <button className="btn primary" onClick={() => setActiveView("Quantify")}>Quantify</button>
+                </>
+              } />
+
+              <div className="grid">
+                <div className="col12">
+                  <div className="label">Scenario title</div>
+                  <input className="input" value={selectedScenario.title} onChange={(e) => setScenario(selectedScenario.id, { title: e.target.value })} placeholder="Example: CRM vendor credential compromise leading to PII exfiltration" />
+                </div>
+
+                <div className="col6">
+                  <div className="label">Asset at risk</div>
+                  <input className="input" value={selectedScenario.assetAtRisk} onChange={(e) => setScenario(selectedScenario.id, { assetAtRisk: e.target.value })} placeholder="Example: Customer PII in CRM" />
+                </div>
+                <div className="col6">
+                  <div className="label">Threat actor</div>
+                  <input className="input" value={selectedScenario.threatActor} onChange={(e) => setScenario(selectedScenario.id, { threatActor: e.target.value })} />                <div className="col6">
+                  <div className="label">Threat actor</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.threatActor}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, { threatActor: e.target.value })
+                    }
+                  />
+                </div>
+
+                <div className="col12">
+                  <div className="label">Attack vector</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.attackVector}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, { attackVector: e.target.value })
+                    }
+                    placeholder="Example: Phishing, stolen credentials, exposed API key"
+                  />
+                </div>
+
+                <div className="col12">
+                  <div className="label">Loss event</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.lossEvent}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, { lossEvent: e.target.value })
+                    }
+                    placeholder="Example: Unauthorized data exfiltration"
+                  />
+                </div>
+
+                <div className="col12">
+                  <div className="label">Narrative</div>
+                  <textarea
+                    className="textarea"
+                    value={selectedScenario.narrative}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, { narrative: e.target.value })
+                    }
+                    placeholder="Describe what happens, why it matters, and who is impacted."
+                  />
+                </div>
+
+                <div className="col12">
+                  <div className="label">Key assumptions</div>
+                  <textarea
+                    className="textarea"
+                    value={selectedScenario.assumptions}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, { assumptions: e.target.value })
+                    }
+                    placeholder="Detection time, data volume, response assumptions, etc."
+                  />
+                </div>
               </div>
             </div>
           ) : null}
 
-          {activeView === "Decisions" && selectedScenario ? (
+          {/* ---------------- QUANTIFICATION ---------------- */}
+          {activeView === "Quantify" && selectedScenario ? (
             <div className="card card-pad">
               <SectionTitle
-                title="Risk decision"
-                subtitle="Turn analysis into an explicit, accountable decision."
+                title="Quantification (FAIR Monte Carlo)"
+                subtitle="Enter min / most-likely / max for each factor."
+                right={
+                  !runState.running ? (
+                    <button className="btn primary" onClick={runMonteCarlo}>
+                      Run analysis
+                    </button>
+                  ) : (
+                    <button className="btn" onClick={cancelRun}>
+                      Cancel
+                    </button>
+                  )
+                }
               />
+
+              <div className="grid">
+                <div className="col4">
+                  <div className="label">TEF min</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.quant.tef.min}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, {
+                        quant: {
+                          ...selectedScenario.quant,
+                          tef: { ...selectedScenario.quant.tef, min: e.target.value },
+                        },
+                      })
+                    }
+                  />
+                </div>
+                <div className="col4">
+                  <div className="label">TEF ML</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.quant.tef.ml}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, {
+                        quant: {
+                          ...selectedScenario.quant,
+                          tef: { ...selectedScenario.quant.tef, ml: e.target.value },
+                        },
+                      })
+                    }
+                  />
+                </div>
+                <div className="col4">
+                  <div className="label">TEF max</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.quant.tef.max}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, {
+                        quant: {
+                          ...selectedScenario.quant,
+                          tef: { ...selectedScenario.quant.tef, max: e.target.value },
+                        },
+                      })
+                    }
+                  />
+                </div>
+
+                <div className="col4">
+                  <div className="label">Susceptibility min (%)</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.quant.susc.min}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, {
+                        quant: {
+                          ...selectedScenario.quant,
+                          susc: { ...selectedScenario.quant.susc, min: e.target.value },
+                        },
+                      })
+                    }
+                  />
+                </div>
+                <div className="col4">
+                  <div className="label">Susceptibility ML (%)</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.quant.susc.ml}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, {
+                        quant: {
+                          ...selectedScenario.quant,
+                          susc: { ...selectedScenario.quant.susc, ml: e.target.value },
+                        },
+                      })
+                    }
+                  />
+                </div>
+                <div className="col4">
+                  <div className="label">Susceptibility max (%)</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.quant.susc.max}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, {
+                        quant: {
+                          ...selectedScenario.quant,
+                          susc: { ...selectedScenario.quant.susc, max: e.target.value },
+                        },
+                      })
+                    }
+                  />
+                </div>
+
+                <div className="col4">
+                  <div className="label">Loss min (€)</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.quant.pel.min}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, {
+                        quant: {
+                          ...selectedScenario.quant,
+                          pel: { ...selectedScenario.quant.pel, min: e.target.value },
+                        },
+                      })
+                    }
+                  />
+                </div>
+                <div className="col4">
+                  <div className="label">Loss ML (€)</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.quant.pel.ml}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, {
+                        quant: {
+                          ...selectedScenario.quant,
+                          pel: { ...selectedScenario.quant.pel, ml: e.target.value },
+                        },
+                      })
+                    }
+                  />
+                </div>
+                <div className="col4">
+                  <div className="label">Loss max (€)</div>
+                  <input
+                    className="input"
+                    value={selectedScenario.quant.pel.max}
+                    onChange={(e) =>
+                      setScenario(selectedScenario.id, {
+                        quant: {
+                          ...selectedScenario.quant,
+                          pel: { ...selectedScenario.quant.pel, max: e.target.value },
+                        },
+                      })
+                    }
+                  />
+                </div>
+              </div>
+
+              {selectedScenario.quant.stats ? (
+                <>
+                  <ExceedanceCurve
+                    title="Loss exceedance curve (ALE)"
+                    values={selectedScenario.quant.aleSamples}
+                  />
+                  <SparkHistogram
+                    title="Monte Carlo distribution (ALE)"
+                    values={selectedScenario.quant.aleSamples}
+                  />
+                </>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* ---------------- TREATMENTS ---------------- */}
+          {activeView === "Treatments" && selectedScenario ? (
+            <div className="card card-pad">
+              <SectionTitle title="Treatments" subtitle="Automatically suggested from FAIR drivers." />
+
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Treatment</th>
+                    <th>Owner</th>
+                    <th>Annual cost (€)</th>
+                    <th>Effect (%)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedScenario.treatments.map((t) => (
+                    <tr key={t.id}>
+                      <td>{t.kind}</td>
+                      <td>
+                        <input
+                          className="input"
+                          value={t.title}
+                          onChange={(e) => {
+                            const next = selectedScenario.treatments.map((x) =>
+                              x.id === t.id ? { ...x, title: e.target.value } : x
+                            );
+                            setScenario(selectedScenario.id, { treatments: next });
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="input"
+                          value={t.owner}
+                          onChange={(e) => {
+                            const next = selectedScenario.treatments.map((x) =>
+                              x.id === t.id ? { ...x, owner: e.target.value } : x
+                            );
+                            setScenario(selectedScenario.id, { treatments: next });
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="input"
+                          value={t.annualCost}
+                          onChange={(e) => {
+                            const next = selectedScenario.treatments.map((x) =>
+                              x.id === t.id ? { ...x, annualCost: e.target.value } : x
+                            );
+                            setScenario(selectedScenario.id, { treatments: next });
+                          }}
+                        />
+                      </td>
+                      <td>{t.effectPct}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+
+          {/* ---------------- DECISIONS ---------------- */}
+          {activeView === "Decisions" && selectedScenario ? (
+            <div className="card card-pad">
+              <SectionTitle title="Decision" subtitle="Make the risk decision explicit." />
 
               <div className="grid">
                 <div className="col6">
@@ -1064,35 +1399,6 @@ export default function Page() {
                         decision: { ...selectedScenario.decision, owner: e.target.value },
                       })
                     }
-                    placeholder="Business or risk owner"
-                  />
-                </div>
-
-                <div className="col6">
-                  <div className="label">Approver</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.decision.approver}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        decision: { ...selectedScenario.decision, approver: e.target.value },
-                      })
-                    }
-                    placeholder="Committee / executive"
-                  />
-                </div>
-
-                <div className="col6">
-                  <div className="label">Next review date</div>
-                  <input
-                    className="input"
-                    type="date"
-                    value={selectedScenario.decision.reviewDate}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        decision: { ...selectedScenario.decision, reviewDate: e.target.value },
-                      })
-                    }
                   />
                 </div>
 
@@ -1106,55 +1412,12 @@ export default function Page() {
                         decision: { ...selectedScenario.decision, rationale: e.target.value },
                       })
                     }
-                    placeholder="Explain why this decision is acceptable given the quantified risk."
                   />
                 </div>
-              </div>
-
-              <div className="hint">
-                FAIR value comes from defensible decisions, not perfect numbers.
               </div>
             </div>
           ) : null}
 
-          {activeView === "Portfolio" && (
-            <div className="grid">
-              <MiniBars
-                title="Top vendors by EAL"
-                rows={portfolio.topVendors.map((v) => ({
-                  label: v.vendorName,
-                  value: v.eal,
-                }))}
-              />
-
-              <MiniBars
-                title="Top scenarios by EAL"
-                rows={portfolio.topScenarios}
-              />
-            </div>
-          )}
-
-          {activeView === "Reports" && (
-            <div className="card card-pad">
-              <SectionTitle
-                title="Reports & exports"
-                subtitle="Use exports for training review, workshops, or management discussions."
-              />
-
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <button className="btn" onClick={exportExcel}>
-                  Export Excel
-                </button>
-                <button className="btn primary" onClick={exportPDF}>
-                  Export PDF
-                </button>
-              </div>
-
-              <div className="hint">
-                Training tip: ask learners to justify one decision verbally using the PDF.
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
