@@ -1066,360 +1066,56 @@ export default function Page() {
                 </div>
 
                 <div className="col6">
-                  <div className="label">Asset at risk</div>
-                  <input className="input" value={selectedScenario.assetAtRisk} onChange={(e) => setScenario(selectedScenario.id, { assetAtRisk: e.target.value })} placeholder="Example: Customer PII in CRM" />
-                </div>
-                <div className="col6">
-                  <div className="label">Threat actor</div>
-                  <input className="input" value={selectedScenario.threatActor} onChange={(e) => setScenario(selectedScenario.id, { threatActor: e.target.value })} />                <div className="col6">
-                  <div className="label">Threat actor</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.threatActor}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, { threatActor: e.target.value })
-                    }
-                  />
-                </div>
+  <div className="label">Asset at risk</div>
+  <input
+    className="input"
+    value={selectedScenario.assetAtRisk}
+    onChange={(e) =>
+      setScenario(selectedScenario.id, { assetAtRisk: e.target.value })
+    }
+  />
+</div>
 
-                <div className="col12">
-                  <div className="label">Attack vector</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.attackVector}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, { attackVector: e.target.value })
-                    }
-                    placeholder="Example: Phishing, stolen credentials, exposed API key"
-                  />
-                </div>
+<div className="col6">
+  <div className="label">Attack vector</div>
+  <input
+    className="input"
+    value={selectedScenario.attackVector}
+    onChange={(e) =>
+      setScenario(selectedScenario.id, { attackVector: e.target.value })
+    }
+    placeholder="Phishing, API abuse, credential stuffing…"
+  />
+</div>
 
-                <div className="col12">
-                  <div className="label">Loss event</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.lossEvent}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, { lossEvent: e.target.value })
-                    }
-                    placeholder="Example: Unauthorized data exfiltration"
-                  />
-                </div>
+<div className="col12">
+  <div className="label">Loss event</div>
+  <input
+    className="input"
+    value={selectedScenario.lossEvent}
+    onChange={(e) =>
+      setScenario(selectedScenario.id, { lossEvent: e.target.value })
+    }
+  />
+</div>
 
-                <div className="col12">
-                  <div className="label">Narrative</div>
-                  <textarea
-                    className="textarea"
-                    value={selectedScenario.narrative}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, { narrative: e.target.value })
-                    }
-                    placeholder="Describe what happens, why it matters, and who is impacted."
-                  />
-                </div>
+<div className="col12">
+  <div className="label">Scenario narrative</div>
+  <textarea
+    className="textarea"
+    value={selectedScenario.narrative}
+    onChange={(e) =>
+      setScenario(selectedScenario.id, { narrative: e.target.value })
+    }
+  />
+</div>
 
-                <div className="col12">
-                  <div className="label">Key assumptions</div>
-                  <textarea
-                    className="textarea"
-                    value={selectedScenario.assumptions}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, { assumptions: e.target.value })
-                    }
-                    placeholder="Detection time, data volume, response assumptions, etc."
-                  />
-                </div>
-              </div>
-            </div>
-          ) : null}
+</div>
+</div>
+) : null}
 
-          {/* ---------------- QUANTIFICATION ---------------- */}
-          {activeView === "Quantify" && selectedScenario ? (
-            <div className="card card-pad">
-              <SectionTitle
-                title="Quantification (FAIR Monte Carlo)"
-                subtitle="Enter min / most-likely / max for each factor."
-                right={
-                  !runState.running ? (
-                    <button className="btn primary" onClick={runMonteCarlo}>
-                      Run analysis
-                    </button>
-                  ) : (
-                    <button className="btn" onClick={cancelRun}>
-                      Cancel
-                    </button>
-                  )
-                }
-              />
-
-              <div className="grid">
-                <div className="col4">
-                  <div className="label">TEF min</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.quant.tef.min}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        quant: {
-                          ...selectedScenario.quant,
-                          tef: { ...selectedScenario.quant.tef, min: e.target.value },
-                        },
-                      })
-                    }
-                  />
-                </div>
-                <div className="col4">
-                  <div className="label">TEF ML</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.quant.tef.ml}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        quant: {
-                          ...selectedScenario.quant,
-                          tef: { ...selectedScenario.quant.tef, ml: e.target.value },
-                        },
-                      })
-                    }
-                  />
-                </div>
-                <div className="col4">
-                  <div className="label">TEF max</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.quant.tef.max}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        quant: {
-                          ...selectedScenario.quant,
-                          tef: { ...selectedScenario.quant.tef, max: e.target.value },
-                        },
-                      })
-                    }
-                  />
-                </div>
-
-                <div className="col4">
-                  <div className="label">Susceptibility min (%)</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.quant.susc.min}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        quant: {
-                          ...selectedScenario.quant,
-                          susc: { ...selectedScenario.quant.susc, min: e.target.value },
-                        },
-                      })
-                    }
-                  />
-                </div>
-                <div className="col4">
-                  <div className="label">Susceptibility ML (%)</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.quant.susc.ml}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        quant: {
-                          ...selectedScenario.quant,
-                          susc: { ...selectedScenario.quant.susc, ml: e.target.value },
-                        },
-                      })
-                    }
-                  />
-                </div>
-                <div className="col4">
-                  <div className="label">Susceptibility max (%)</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.quant.susc.max}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        quant: {
-                          ...selectedScenario.quant,
-                          susc: { ...selectedScenario.quant.susc, max: e.target.value },
-                        },
-                      })
-                    }
-                  />
-                </div>
-
-                <div className="col4">
-                  <div className="label">Loss min (€)</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.quant.pel.min}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        quant: {
-                          ...selectedScenario.quant,
-                          pel: { ...selectedScenario.quant.pel, min: e.target.value },
-                        },
-                      })
-                    }
-                  />
-                </div>
-                <div className="col4">
-                  <div className="label">Loss ML (€)</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.quant.pel.ml}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        quant: {
-                          ...selectedScenario.quant,
-                          pel: { ...selectedScenario.quant.pel, ml: e.target.value },
-                        },
-                      })
-                    }
-                  />
-                </div>
-                <div className="col4">
-                  <div className="label">Loss max (€)</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.quant.pel.max}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        quant: {
-                          ...selectedScenario.quant,
-                          pel: { ...selectedScenario.quant.pel, max: e.target.value },
-                        },
-                      })
-                    }
-                  />
-                </div>
-              </div>
-
-              {selectedScenario.quant.stats ? (
-                <>
-                  <ExceedanceCurve
-                    title="Loss exceedance curve (ALE)"
-                    values={selectedScenario.quant.aleSamples}
-                  />
-                  <SparkHistogram
-                    title="Monte Carlo distribution (ALE)"
-                    values={selectedScenario.quant.aleSamples}
-                  />
-                </>
-              ) : null}
-            </div>
-          ) : null}
-
-          {/* ---------------- TREATMENTS ---------------- */}
-          {activeView === "Treatments" && selectedScenario ? (
-            <div className="card card-pad">
-              <SectionTitle title="Treatments" subtitle="Automatically suggested from FAIR drivers." />
-
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Type</th>
-                    <th>Treatment</th>
-                    <th>Owner</th>
-                    <th>Annual cost (€)</th>
-                    <th>Effect (%)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedScenario.treatments.map((t) => (
-                    <tr key={t.id}>
-                      <td>{t.kind}</td>
-                      <td>
-                        <input
-                          className="input"
-                          value={t.title}
-                          onChange={(e) => {
-                            const next = selectedScenario.treatments.map((x) =>
-                              x.id === t.id ? { ...x, title: e.target.value } : x
-                            );
-                            setScenario(selectedScenario.id, { treatments: next });
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="input"
-                          value={t.owner}
-                          onChange={(e) => {
-                            const next = selectedScenario.treatments.map((x) =>
-                              x.id === t.id ? { ...x, owner: e.target.value } : x
-                            );
-                            setScenario(selectedScenario.id, { treatments: next });
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="input"
-                          value={t.annualCost}
-                          onChange={(e) => {
-                            const next = selectedScenario.treatments.map((x) =>
-                              x.id === t.id ? { ...x, annualCost: e.target.value } : x
-                            );
-                            setScenario(selectedScenario.id, { treatments: next });
-                          }}
-                        />
-                      </td>
-                      <td>{t.effectPct}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-
-          {/* ---------------- DECISIONS ---------------- */}
-          {activeView === "Decisions" && selectedScenario ? (
-            <div className="card card-pad">
-              <SectionTitle title="Decision" subtitle="Make the risk decision explicit." />
-
-              <div className="grid">
-                <div className="col6">
-                  <div className="label">Decision</div>
-                  <Select
-                    value={selectedScenario.decision.status}
-                    onChange={(val) =>
-                      setScenario(selectedScenario.id, {
-                        decision: { ...selectedScenario.decision, status: val },
-                      })
-                    }
-                    options={["", "Accept", "Mitigate", "Transfer", "Avoid"]}
-                  />
-                </div>
-
-                <div className="col6">
-                  <div className="label">Decision owner</div>
-                  <input
-                    className="input"
-                    value={selectedScenario.decision.owner}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        decision: { ...selectedScenario.decision, owner: e.target.value },
-                      })
-                    }
-                  />
-                </div>
-
-                <div className="col12">
-                  <div className="label">Decision rationale</div>
-                  <textarea
-                    className="textarea"
-                    value={selectedScenario.decision.rationale}
-                    onChange={(e) =>
-                      setScenario(selectedScenario.id, {
-                        decision: { ...selectedScenario.decision, rationale: e.target.value },
-                      })
-                    }
-                  />
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-        </div>
-      </div>
-    </div>
-  );
+</div>
+</div>
+</div>
+);
 }
