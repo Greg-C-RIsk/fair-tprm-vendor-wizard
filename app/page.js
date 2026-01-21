@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 // IMPORTS DES VUES
-import VendorView from "./components/VendorView";
+import VendorsView from "./components/VendorsView";
 import TieringView from "./components/TieringView";
 import QuantifyView from "./components/QuantifyView";
 
