@@ -1,3 +1,5 @@
+import "./globals.css";
+
 export const metadata = {
   title: "FAIR TPRM Training Tool",
   description: "Training-only FAIR-based Third Party Risk Management tool",
