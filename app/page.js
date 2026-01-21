@@ -44,19 +44,33 @@ const emptyScenario = () => ({
   lossEvent: "",
   narrative: "",
   // on remplira la quantification à l’étape 2
-  quant: {
-    sims: 10000,
-    tef: { min: "", ml: "", max: "" },
-    susc: { min: "", ml: "", max: "" },
-    pel: { min: "", ml: "", max: "" },
-    stats: null,
-    aleSamples: [],
-    pelSamples: [],
-    lastRunAt: "",
-  },
-  treatments: [],
-  decision: { status: "", owner: "", approver: "", reviewDate: "", rationale: "" },
-});
+quant: {
+  // niveau de travail FAIR
+  level: "LEF",
+
+  // Fréquence
+  lef: { min: "", ml: "", max: "" },
+  tef: { min: "", ml: "", max: "" },
+  contactFrequency: { min: "", ml: "", max: "" },
+  probabilityOfAction: { min: "", ml: "", max: "" },
+  susceptibility: { min: "", ml: "", max: "" },
+
+  // Capacité / résistance
+  threatCapacity: { min: "", ml: "", max: "" },
+  resistanceStrength: { min: "", ml: "", max: "" },
+
+  // Pertes
+  primaryLoss: { min: "", ml: "", max: "" },
+  secondaryLossEventFrequency: { min: "", ml: "", max: "" },
+  secondaryLossMagnitude: { min: "", ml: "", max: "" },
+
+  // Simulation
+  sims: 10000,
+  stats: null,
+  aleSamples: [],
+  pelSamples: [],
+  lastRunAt: "",
+},
 
 export default function Page() {
   const [activeView, setActiveView] = useState("Vendors");
