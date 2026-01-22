@@ -3,169 +3,159 @@
 import { useMemo } from "react";
 
 const money = (n) => {
-  if (!Number.isFinite(n)) return "–";
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "—";
   return new Intl.NumberFormat("en-GB", {
     style: "currency",
     currency: "EUR",
     maximumFractionDigits: 0,
-  }).format(n);
+  }).format(x);
 };
 
-export default function DashboardView({ vendors, setActiveView }) {
-  // Flatten scenarios
-  const scenarios = useMemo(() => {
-    const rows = [];
-    for (const v of vendors) {
+const emptyTiering = () => ({
+  dataSensitivity: 1,
+  integrationDepth: 1,
+  accessPrivileges: 1,
+  historicalIncidents: 1,
+  businessCriticality: 1,
+});
+
+const tierIndex = (t) =>
+  Number(t?.dataSensitivity || 1) *
+  Number(t?.integrationDepth || 1) *
+  Number(t?.accessPrivileges || 1) *
+  Number(t?.historicalIncidents || 1) *
+  Number(t?.businessCriticality || 1);
+
+export default function DashboardView({ vendors = [], setActiveView }) {
+  const { vendorRows, scenarioRows } = useMemo(() => {
+    const vRows = (vendors || []).map((v) => {
+      const idx = tierIndex(v.tiering || emptyTiering());
+      const scen = Array.isArray(v.scenarios) ? v.scenarios : [];
+      const aleSum = scen.reduce((sum, s) => {
+        const aleML = Number(s?.quant?.results?.ale?.ml);
+        return sum + (Number.isFinite(aleML) ? aleML : 0);
+      }, 0);
+      return {
+        id: v.id,
+        name: v.name?.trim() ? v.name : "(Unnamed vendor)",
+        idx,
+        tier: v.tier || "—",
+        carry: !!v.carryForward,
+        scenarios: scen.length,
+        ale: aleSum,
+      };
+    }).sort((a, b) => b.idx - a.idx);
+
+    const sRows = [];
+    for (const v of vendors || []) {
       for (const s of v.scenarios || []) {
-        if (!s.quant?.stats) continue;
-        rows.push({
-          vendorId: v.id,
-          vendorName: v.name,
-          scenarioId: s.id,
-          scenarioTitle: s.title,
-          ale: s.quant.stats.ale.ml,
-          p90: s.quant.stats.ale.p90,
-          decision: s.decision?.choice || "UNDECIDED",
+        const aleML = Number(s?.quant?.results?.ale?.ml);
+        sRows.push({
+          vendor: v.name?.trim() ? v.name : "(Vendor)",
+          title: s.title?.trim() ? s.title : "(Scenario)",
+          ale: Number.isFinite(aleML) ? aleML : 0,
+          decision: s?.decision?.status || "—",
         });
       }
     }
-    return rows;
+    sRows.sort((a, b) => b.ale - a.ale);
+
+    return { vendorRows: vRows, scenarioRows: sRows };
   }, [vendors]);
 
-  const totals = useMemo(() => {
-    const t = {
-      totalALE: 0,
-      accepted: 0,
-      mitigated: 0,
-      transferred: 0,
-      avoided: 0,
-      undecided: 0,
-    };
-
-    for (const s of scenarios) {
-      t.totalALE += s.ale || 0;
-
-      switch (s.decision) {
-        case "ACCEPT":
-          t.accepted += s.ale || 0;
-          break;
-        case "MITIGATE":
-          t.mitigated += s.ale || 0;
-          break;
-        case "TRANSFER":
-          t.transferred += s.ale || 0;
-          break;
-        case "AVOID":
-          t.avoided += s.ale || 0;
-          break;
-        default:
-          t.undecided += s.ale || 0;
-      }
-    }
-
-    return t;
-  }, [scenarios]);
-
-  const topScenarios = [...scenarios]
-    .sort((a, b) => b.ale - a.ale)
-    .slice(0, 10);
+  const totalVendors = vendors?.length || 0;
+  const totalScenarios = vendors.reduce((n, v) => n + (v.scenarios?.length || 0), 0);
+  const carryForward = vendors.filter((v) => v.carryForward).length;
 
   return (
-    <div className="card">
-      <h2>Risk Dashboard</h2>
-
-      {/* Global summary */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <strong>Portfolio overview</strong>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginTop: 10 }}>
-          <div>
-            <div className="label">Total ALE</div>
-            <div style={{ fontWeight: 900 }}>{money(totals.totalALE)}</div>
+    <div className="card card-pad">
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ margin: 0 }}>Dashboard</h2>
+          <div style={{ opacity: 0.8, marginTop: 6 }}>
+            Portfolio overview (tiering + computed ALE from Quantify).
           </div>
-
-          <div>
-            <div className="label">Accepted risk</div>
-            <div>{money(totals.accepted)}</div>
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <span className="badge">{totalVendors} vendor(s)</span>
+            <span className="badge">{totalScenarios} scenario(s)</span>
+            <span className="badge">Carry-forward: {carryForward}</span>
           </div>
+        </div>
 
-          <div>
-            <div className="label">Undecided risk</div>
-            <div style={{ color: totals.undecided > 0 ? "#fbbf24" : "inherit" }}>
-              {money(totals.undecided)}
-            </div>
-          </div>
-
-          <div>
-            <div className="label">Mitigated risk</div>
-            <div>{money(totals.mitigated)}</div>
-          </div>
-
-          <div>
-            <div className="label">Transferred risk</div>
-            <div>{money(totals.transferred)}</div>
-          </div>
-
-          <div>
-            <div className="label">Avoided risk</div>
-            <div>{money(totals.avoided)}</div>
-          </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <button className="btn" onClick={() => setActiveView?.("Vendors")}>← Vendors</button>
         </div>
       </div>
 
-      {/* Top risk drivers */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <strong>Top scenarios by ALE</strong>
+      <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div className="card" style={{ padding: 12 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>Vendors (ranked by tier index)</div>
+          {!vendorRows.length ? (
+            <div style={{ opacity: 0.8 }}>No vendors.</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Vendor</th>
+                    <th>Tier</th>
+                    <th>Index</th>
+                    <th>Carry</th>
+                    <th>Scenarios</th>
+                    <th>Σ ALE (ML)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {vendorRows.map((r) => (
+                    <tr key={r.id}>
+                      <td style={{ fontWeight: 800 }}>{r.name}</td>
+                      <td>{r.tier}</td>
+                      <td style={{ fontWeight: 900 }}>{r.idx}</td>
+                      <td>{r.carry ? "Yes" : "No"}</td>
+                      <td>{r.scenarios}</td>
+                      <td>{money(r.ale)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
-        <table className="table" style={{ marginTop: 10 }}>
-          <thead>
-            <tr>
-              <th>Vendor</th>
-              <th>Scenario</th>
-              <th>ALE (median)</th>
-              <th>P90</th>
-              <th>Decision</th>
-            </tr>
-          </thead>
-          <tbody>
-            {topScenarios.map((s) => (
-              <tr key={s.scenarioId}>
-                <td>{s.vendorName}</td>
-                <td>{s.scenarioTitle}</td>
-                <td>{money(s.ale)}</td>
-                <td>{money(s.p90)}</td>
-                <td>
-                  <span
-                    style={{
-                      padding: "4px 8px",
-                      borderRadius: 6,
-                      fontSize: 12,
-                      background:
-                        s.decision === "UNDECIDED"
-                          ? "rgba(251,191,36,0.2)"
-                          : "rgba(34,197,94,0.2)",
-                    }}
-                  >
-                    {s.decision}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Actions */}
-      <div style={{ display: "flex", gap: 10 }}>
-        <button className="btn" onClick={() => setActiveView("Vendors")}>
-          Vendors
-        </button>
-        <button className="btn" onClick={() => setActiveView("Scenarios")}>
-          Scenarios
-        </button>
-        <button className="btn" onClick={() => setActiveView("Decisions")}>
-          Decisions
-        </button>
+        <div className="card" style={{ padding: 12 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>Top scenarios (by ALE ML)</div>
+          {!scenarioRows.length ? (
+            <div style={{ opacity: 0.8 }}>No scenarios.</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Scenario</th>
+                    <th>ALE (ML)</th>
+                    <th>Decision</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scenarioRows.slice(0, 12).map((r, i) => (
+                    <tr key={`${r.vendor}-${r.title}-${i}`}>
+                      <td>
+                        <div style={{ fontWeight: 800 }}>{r.vendor}</div>
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>{r.title}</div>
+                      </td>
+                      <td>{money(r.ale)}</td>
+                      <td>{r.decision}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
+            (ALE shown here comes from Quantify → Compute results.)
+          </div>
+        </div>
       </div>
     </div>
   );
