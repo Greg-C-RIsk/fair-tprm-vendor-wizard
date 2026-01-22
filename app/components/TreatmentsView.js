@@ -1,206 +1,118 @@
 "use client";
 
-import { useMemo, useState } from "react";
+const uid = () => Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
 
-/*
-TreatmentsView
-- Reads scenario.quant.stats (from ResultsView)
-- Applies FAIR-aligned treatment effects
-- No re-simulation (training simplification)
-- Outputs: Risk reduction, residual risk, ROI
-*/
-
-const money = (n) => {
-  if (!Number.isFinite(n)) return "–";
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 0,
-  }).format(n);
-};
-
-const uid = () => Math.random().toString(16).slice(2);
-
-// FAIR-aligned treatment catalog (training)
-const TREATMENT_LIBRARY = [
-  {
-    id: "MFA",
-    label: "Enforce MFA and least privilege",
-    affects: "Susceptibility",
-    reductionPct: 30,
-  },
-  {
-    id: "Monitoring",
-    label: "Improve monitoring and detection",
-    affects: "TEF",
-    reductionPct: 20,
-  },
-  {
-    id: "Segmentation",
-    label: "Network segmentation / blast radius reduction",
-    affects: "Loss Magnitude",
-    reductionPct: 25,
-  },
-  {
-    id: "IR",
-    label: "Incident response readiness",
-    affects: "Secondary Loss",
-    reductionPct: 20,
-  },
-  {
-    id: "Insurance",
-    label: "Cyber insurance transfer",
-    affects: "Financial Impact",
-    reductionPct: 40,
-  },
-];
+const emptyTreatment = () => ({
+  id: uid(),
+  kind: "Reduce susceptibility",
+  title: "",
+  owner: "",
+  annualCost: "",
+  effectPct: 20,
+});
 
 export default function TreatmentsView({ vendor, scenario, updateVendor, setActiveView }) {
-  if (!scenario?.quant?.stats) {
-    return <div className="card">Run quantification before defining treatments.</div>;
-  }
+  if (!vendor) return <div className="card card-pad">Select a vendor.</div>;
+  if (!scenario) return <div className="card card-pad">Select a scenario.</div>;
 
-  const baseALE = scenario.quant.stats.ale.ml;
+  const treatments = Array.isArray(scenario.treatments) ? scenario.treatments : [];
 
-  const [treatments, setTreatments] = useState([]);
-
-  const addTreatment = (tpl) => {
-    setTreatments((prev) => [
-      ...prev,
-      {
-        id: uid(),
-        name: tpl.label,
-        affects: tpl.affects,
-        reductionPct: tpl.reductionPct,
-        annualCost: "",
-      },
-    ]);
-  };
-
-  const updateTreatment = (id, patch) => {
-    setTreatments((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, ...patch } : t))
-    );
-  };
-
-  const removeTreatment = (id) => {
-    setTreatments((prev) => prev.filter((t) => t.id !== id));
-  };
-
-  // Simple FAIR-consistent reduction model (training)
-  const totalReductionPct = useMemo(() => {
-    // diminishing returns
-    let r = 0;
-    treatments.forEach((t) => {
-      r = r + (t.reductionPct / 100) * (1 - r);
+  const updateScenario = (patch) => {
+    updateVendor(vendor.id, {
+      scenarios: (vendor.scenarios || []).map((s) => (s.id === scenario.id ? { ...s, ...patch } : s)),
     });
-    return r;
-  }, [treatments]);
+  };
 
-  const residualALE = baseALE * (1 - totalReductionPct);
+  const upsertTreatment = (id, patch) => {
+    updateScenario({
+      treatments: treatments.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+    });
+  };
 
-  const totalCost = treatments.reduce(
-    (sum, t) => sum + (Number(t.annualCost) || 0),
-    0
-  );
+  const add = () => updateScenario({ treatments: [...treatments, emptyTreatment()] });
 
-  const benefit = baseALE - residualALE;
-  const roi = totalCost > 0 ? benefit / totalCost : null;
+  const del = (id) => updateScenario({ treatments: treatments.filter((t) => t.id !== id) });
 
   return (
-    <div className="card">
-      <h2>Treatment Analysis</h2>
-
-      <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-        <button className="btn" onClick={() => setActiveView("Results")}>
-          Back to results
-        </button>
-        <button
-          className="btn primary"
-          onClick={() => setActiveView("Decisions")}
-          disabled={!treatments.length}
-        >
-          Go to decision
-        </button>
-      </div>
-
-      {/* Baseline */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <strong>Baseline Risk</strong>
-        <div>ALE (median): {money(baseALE)}</div>
-      </div>
-
-      {/* Treatment library */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <strong>Add treatments</strong>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-          {TREATMENT_LIBRARY.map((t) => (
-            <button key={t.id} className="btn" onClick={() => addTreatment(t)}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Selected treatments */}
-      {treatments.length > 0 && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <strong>Selected treatments</strong>
-
-          {treatments.map((t) => (
-            <div
-              key={t.id}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "2fr 1fr 1fr auto",
-                gap: 8,
-                alignItems: "center",
-                marginTop: 8,
-              }}
-            >
-              <div>
-                <strong>{t.name}</strong>
-                <div style={{ fontSize: 12, opacity: 0.7 }}>
-                  Affects: {t.affects} | Reduction: {t.reductionPct}%
-                </div>
-              </div>
-
-              <input
-                className="input"
-                placeholder="Annual cost (€)"
-                value={t.annualCost}
-                onChange={(e) =>
-                  updateTreatment(t.id, { annualCost: e.target.value })
-                }
-              />
-
-              <div>{money((t.reductionPct / 100) * baseALE)}</div>
-
-              <button className="btn" onClick={() => removeTreatment(t.id)}>
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Impact summary */}
-      {treatments.length > 0 && (
-        <div className="card">
-          <strong>Impact summary</strong>
-
-          <div style={{ marginTop: 8 }}>
-            <div>Risk before: {money(baseALE)}</div>
-            <div>Risk after: {money(residualALE)}</div>
-            <div>Risk reduction: {money(benefit)}</div>
-            <div>Total annual cost: {money(totalCost)}</div>
-            <div>
-              ROI:{" "}
-              {roi !== null ? roi.toFixed(2) : "–"}
-            </div>
+    <div className="card card-pad">
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ margin: 0 }}>Treatments</h2>
+          <div style={{ opacity: 0.8, marginTop: 6 }}>
+            Capture proposed controls / treatments for this scenario.
+          </div>
+          <div style={{ opacity: 0.7, marginTop: 6, fontSize: 13 }}>
+            Vendor: <b>{vendor.name?.trim() ? vendor.name : "(Unnamed vendor)"}</b> · Scenario:{" "}
+            <b>{scenario.title?.trim() ? scenario.title : "(Untitled scenario)"}</b>
           </div>
         </div>
-      )}
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <button className="btn" onClick={() => setActiveView?.("Quantify")}>← Quantify</button>
+          <button className="btn primary" onClick={add}>+ Add treatment</button>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+        {!treatments.length ? (
+          <div className="hint">No treatments yet. Click “Add treatment”.</div>
+        ) : null}
+
+        {treatments.map((t) => (
+          <div key={t.id} className="card" style={{ padding: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 900 }}>{t.title?.trim() ? t.title : "(Untitled treatment)"}</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn" onClick={() => del(t.id)}>Delete</button>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <div className="label">Kind</div>
+                <select className="input" value={t.kind} onChange={(e) => upsertTreatment(t.id, { kind: e.target.value })}>
+                  <option>Reduce TEF</option>
+                  <option>Reduce susceptibility</option>
+                  <option>Reduce loss magnitude</option>
+                  <option>Transfer</option>
+                  <option>Avoid</option>
+                </select>
+              </div>
+
+              <div>
+                <div className="label">Owner</div>
+                <input className="input" value={t.owner || ""} onChange={(e) => upsertTreatment(t.id, { owner: e.target.value })} />
+              </div>
+
+              <div style={{ gridColumn: "1 / -1" }}>
+                <div className="label">Title</div>
+                <input className="input" value={t.title || ""} onChange={(e) => upsertTreatment(t.id, { title: e.target.value })} placeholder="Example: Enforce MFA for vendor admin accounts" />
+              </div>
+
+              <div>
+                <div className="label">Annual cost (€)</div>
+                <input className="input" inputMode="decimal" value={t.annualCost || ""} onChange={(e) => upsertTreatment(t.id, { annualCost: e.target.value })} />
+              </div>
+
+              <div>
+                <div className="label">Effect (%)</div>
+                <input
+                  className="input"
+                  inputMode="decimal"
+                  value={String(t.effectPct ?? 20)}
+                  onChange={(e) => upsertTreatment(t.id, { effectPct: Number(e.target.value) || 0 })}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+        <button className="btn primary" onClick={() => setActiveView?.("Decisions")}>
+          Go to Decisions →
+        </button>
+      </div>
     </div>
   );
 }
