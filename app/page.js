@@ -11,16 +11,15 @@ import { useEffect, useMemo, useState } from "react";
  *   - Right: vendor details panel
  *   - Add/Edit uses a dedicated form panel with “Create vendor” / “Save” / “Cancel”
  * - Safe localStorage + safe defaults (no SSR/prerender crashes)
- *
- * Notes:
- * - This file is self-contained (no imports from ./components needed).
- * - If you already have other tabs (Quantify/Treatments/etc.), they are included as placeholders
- *   so the app remains usable while you iterate. We’ll plug your real views afterward.
  */
 
 const LS_KEY = "fair_tprm_training_v6";
 
 const uid = () => Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+
+// ---------------------------
+// Model helpers
+// ---------------------------
 
 const emptyTiering = () => ({
   dataSensitivity: 1,
@@ -86,6 +85,10 @@ const emptyVendor = () => ({
   scenarios: [emptyScenario()],
 });
 
+// ---------------------------
+// Safety / normalization
+// ---------------------------
+
 function safeParse(raw, fallback) {
   try {
     const x = JSON.parse(raw);
@@ -94,6 +97,65 @@ function safeParse(raw, fallback) {
     return fallback;
   }
 }
+
+/**
+ * Normalize state loaded from storage so we never crash:
+ * - vendors is array, at least 1
+ * - each vendor has tiering + scenarios (at least 1)
+ * - each scenario has quant/treatments/decision
+ * - selectedVendorId / selectedScenarioId always valid
+ */
+function normalizeState(maybeState) {
+  const base = maybeState && typeof maybeState === "object" ? maybeState : {};
+  let vendors = Array.isArray(base.vendors) ? base.vendors : [];
+
+  if (!vendors.length) vendors = [emptyVendor()];
+
+  vendors = vendors.map((v) => {
+    const vv = v && typeof v === "object" ? v : {};
+    const tiering = vv.tiering && typeof vv.tiering === "object" ? { ...emptyTiering(), ...vv.tiering } : emptyTiering();
+
+    let scenarios = Array.isArray(vv.scenarios) ? vv.scenarios : [];
+    if (!scenarios.length) scenarios = [emptyScenario()];
+
+    scenarios = scenarios.map((s) => {
+      const ss = s && typeof s === "object" ? s : {};
+      const quant = ss.quant && typeof ss.quant === "object" ? { ...emptyQuant(), ...ss.quant } : emptyQuant();
+      return {
+        ...emptyScenario(),
+        ...ss,
+        id: ss.id || uid(),
+        quant,
+        treatments: Array.isArray(ss.treatments) ? ss.treatments : [],
+        decision: ss.decision && typeof ss.decision === "object" ? { ...emptyScenario().decision, ...ss.decision } : emptyScenario().decision,
+      };
+    });
+
+    return {
+      ...emptyVendor(),
+      ...vv,
+      id: vv.id || uid(),
+      tiering,
+      scenarios,
+      carryForward: !!vv.carryForward,
+    };
+  });
+
+  const selectedVendorId =
+    vendors.some((v) => v.id === base.selectedVendorId) ? base.selectedVendorId : vendors[0]?.id || "";
+
+  const selectedVendor = vendors.find((v) => v.id === selectedVendorId) || vendors[0] || null;
+  const scenarioIds = selectedVendor?.scenarios?.map((s) => s.id) || [];
+  const selectedScenarioId = scenarioIds.includes(base.selectedScenarioId)
+    ? base.selectedScenarioId
+    : selectedVendor?.scenarios?.[0]?.id || "";
+
+  return { vendors, selectedVendorId, selectedScenarioId };
+}
+
+// ---------------------------
+// UI atoms
+// ---------------------------
 
 function Button({ className = "", ...props }) {
   return <button {...props} className={className || "btn"} />;
@@ -146,15 +208,16 @@ function Card({ children, style }) {
   );
 }
 
+// ---------------------------
+// Vendors UX (form + list/details)
+// ---------------------------
+
 function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
-  // mode: "create" | "edit"
   return (
     <Card>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 900 }}>
-            {mode === "create" ? "Create a new vendor" : "Edit vendor"}
-          </div>
+          <div style={{ fontSize: 18, fontWeight: 900 }}>{mode === "create" ? "Create a new vendor" : "Edit vendor"}</div>
           <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
             Fill in the minimum required fields first. You can refine later.
           </div>
@@ -172,20 +235,11 @@ function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
 
       <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <InputRow label="Vendor name">
-          <input
-            className="input"
-            value={draft.name}
-            onChange={(e) => onChange({ ...draft, name: e.target.value })}
-            placeholder="Example: TalentLMS"
-          />
+          <input className="input" value={draft.name} onChange={(e) => onChange({ ...draft, name: e.target.value })} placeholder="Example: TalentLMS" />
         </InputRow>
 
         <InputRow label="Category">
-          <select
-            className="input"
-            value={draft.category}
-            onChange={(e) => onChange({ ...draft, category: e.target.value })}
-          >
+          <select className="input" value={draft.category} onChange={(e) => onChange({ ...draft, category: e.target.value })}>
             {["SaaS", "Cloud", "MSP", "Payment", "Data processor", "AI provider", "Other"].map((o) => (
               <option key={o} value={o}>
                 {o}
@@ -195,20 +249,11 @@ function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
         </InputRow>
 
         <InputRow label="Business owner">
-          <input
-            className="input"
-            value={draft.businessOwner}
-            onChange={(e) => onChange({ ...draft, businessOwner: e.target.value })}
-            placeholder="Example: Head of Sales Ops"
-          />
+          <input className="input" value={draft.businessOwner} onChange={(e) => onChange({ ...draft, businessOwner: e.target.value })} placeholder="Example: Head of Sales Ops" />
         </InputRow>
 
         <InputRow label="Geography">
-          <select
-            className="input"
-            value={draft.geography}
-            onChange={(e) => onChange({ ...draft, geography: e.target.value })}
-          >
+          <select className="input" value={draft.geography} onChange={(e) => onChange({ ...draft, geography: e.target.value })}>
             {["EU", "US", "UK", "Global", "Other"].map((o) => (
               <option key={o} value={o}>
                 {o}
@@ -219,33 +264,18 @@ function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
 
         <div style={{ gridColumn: "1 / -1" }}>
           <InputRow label="Critical business function supported">
-            <input
-              className="input"
-              value={draft.criticalFunction}
-              onChange={(e) => onChange({ ...draft, criticalFunction: e.target.value })}
-              placeholder="Example: Customer acquisition & retention"
-            />
+            <input className="input" value={draft.criticalFunction} onChange={(e) => onChange({ ...draft, criticalFunction: e.target.value })} placeholder="Example: Customer acquisition & retention" />
           </InputRow>
         </div>
 
         <div style={{ gridColumn: "1 / -1" }}>
           <InputRow label="Data types processed">
-            <textarea
-              className="textarea"
-              value={draft.dataTypes}
-              onChange={(e) => onChange({ ...draft, dataTypes: e.target.value })}
-              placeholder="Example: Customer PII, order history, support tickets"
-              rows={5}
-            />
+            <textarea className="textarea" value={draft.dataTypes} onChange={(e) => onChange({ ...draft, dataTypes: e.target.value })} placeholder="Example: Customer PII, order history, support tickets" rows={5} />
           </InputRow>
         </div>
 
         <InputRow label="Dependency level">
-          <select
-            className="input"
-            value={draft.dependencyLevel}
-            onChange={(e) => onChange({ ...draft, dependencyLevel: e.target.value })}
-          >
+          <select className="input" value={draft.dependencyLevel} onChange={(e) => onChange({ ...draft, dependencyLevel: e.target.value })}>
             {["Low", "Medium", "High"].map((o) => (
               <option key={o} value={o}>
                 {o}
@@ -256,11 +286,7 @@ function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
 
         <InputRow label="Carry-forward (for deeper analysis)">
           <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, opacity: 0.9 }}>
-            <input
-              type="checkbox"
-              checked={!!draft.carryForward}
-              onChange={(e) => onChange({ ...draft, carryForward: e.target.checked })}
-            />
+            <input type="checkbox" checked={!!draft.carryForward} onChange={(e) => onChange({ ...draft, carryForward: e.target.checked })} />
             Carry-forward
           </label>
         </InputRow>
@@ -273,15 +299,7 @@ function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
   );
 }
 
-function VendorsView({
-  vendors,
-  selectedVendorId,
-  onSelectVendor,
-  onRequestCreate,
-  onRequestEdit,
-  onDeleteVendor,
-  onGoTiering,
-}) {
+function VendorsView({ vendors, selectedVendorId, onSelectVendor, onRequestCreate, onRequestEdit, onDeleteVendor, onGoTiering }) {
   const [q, setQ] = useState("");
 
   const filtered = useMemo(() => {
@@ -294,7 +312,6 @@ function VendorsView({
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 14, alignItems: "start" }}>
-      {/* Left list */}
       <Card>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
           <div style={{ fontSize: 16, fontWeight: 900 }}>Vendors</div>
@@ -304,12 +321,7 @@ function VendorsView({
         </div>
 
         <div style={{ marginTop: 10 }}>
-          <input
-            className="input"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search vendor…"
-          />
+          <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search vendor…" />
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
@@ -348,7 +360,6 @@ function VendorsView({
         </div>
       </Card>
 
-      {/* Right details */}
       <Card>
         {!selected ? (
           <div style={{ fontSize: 14, opacity: 0.85 }}>
@@ -358,9 +369,7 @@ function VendorsView({
           <>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div>
-                <div style={{ fontSize: 20, fontWeight: 950 }}>
-                  {selected.name?.trim() ? selected.name : "(Unnamed vendor)"}
-                </div>
+                <div style={{ fontSize: 20, fontWeight: 950 }}>{selected.name?.trim() ? selected.name : "(Unnamed vendor)"}</div>
                 <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Pill>{selected.category}</Pill>
                   <Pill>{selected.geography}</Pill>
@@ -385,31 +394,23 @@ function VendorsView({
             <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Card style={{ padding: 12 }}>
                 <div style={{ fontWeight: 900, marginBottom: 6 }}>Critical function</div>
-                <div style={{ fontSize: 13, opacity: 0.9, whiteSpace: "pre-wrap" }}>
-                  {selected.criticalFunction?.trim() ? selected.criticalFunction : "—"}
-                </div>
+                <div style={{ fontSize: 13, opacity: 0.9, whiteSpace: "pre-wrap" }}>{selected.criticalFunction?.trim() ? selected.criticalFunction : "—"}</div>
               </Card>
 
               <Card style={{ padding: 12 }}>
                 <div style={{ fontWeight: 900, marginBottom: 6 }}>Business owner</div>
-                <div style={{ fontSize: 13, opacity: 0.9 }}>
-                  {selected.businessOwner?.trim() ? selected.businessOwner : "—"}
-                </div>
+                <div style={{ fontSize: 13, opacity: 0.9 }}>{selected.businessOwner?.trim() ? selected.businessOwner : "—"}</div>
               </Card>
 
               <Card style={{ padding: 12, gridColumn: "1 / -1" }}>
                 <div style={{ fontWeight: 900, marginBottom: 6 }}>Data types</div>
-                <div style={{ fontSize: 13, opacity: 0.9, whiteSpace: "pre-wrap" }}>
-                  {selected.dataTypes?.trim() ? selected.dataTypes : "—"}
-                </div>
+                <div style={{ fontSize: 13, opacity: 0.9, whiteSpace: "pre-wrap" }}>{selected.dataTypes?.trim() ? selected.dataTypes : "—"}</div>
               </Card>
 
               <Card style={{ padding: 12 }}>
                 <div style={{ fontWeight: 900, marginBottom: 6 }}>Scenarios</div>
                 <div style={{ fontSize: 13, opacity: 0.9 }}>
-                  {Array.isArray(selected.scenarios) && selected.scenarios.length
-                    ? selected.scenarios.map((s) => (s.title?.trim() ? s.title : "(Untitled scenario)")).join(" • ")
-                    : "—"}
+                  {Array.isArray(selected.scenarios) && selected.scenarios.length ? selected.scenarios.map((s) => (s.title?.trim() ? s.title : "(Untitled scenario)")).join(" • ") : "—"}
                 </div>
               </Card>
 
@@ -417,9 +418,7 @@ function VendorsView({
                 <div style={{ fontWeight: 900, marginBottom: 6 }}>Prioritization</div>
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={{ fontSize: 13, opacity: 0.9 }}>Index: {tierIndex(selected.tiering || emptyTiering())}</div>
-                  <div style={{ fontSize: 13, opacity: 0.9 }}>
-                    Carry-forward: {selected.carryForward ? "Yes" : "No"}
-                  </div>
+                  <div style={{ fontSize: 13, opacity: 0.9 }}>Carry-forward: {selected.carryForward ? "Yes" : "No"}</div>
                 </div>
               </Card>
             </div>
@@ -439,62 +438,53 @@ function PlaceholderView({ title, text }) {
   );
 }
 
+// ---------------------------
+// Page
+// ---------------------------
+
 export default function Page() {
   const [activeView, setActiveView] = useState("Vendors");
 
-  // persisted app state
   const [state, setState] = useState(() => {
-    // Important: do NOT assume window exists (avoids prerender crashes)
     if (typeof window === "undefined") {
-      return { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" };
+      return normalizeState({ vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" });
     }
     const raw = window.localStorage.getItem(LS_KEY);
-    const base = raw
-      ? safeParse(raw, { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" })
-      : { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" };
-
-    // normalize
-    const vendors = Array.isArray(base.vendors) && base.vendors.length ? base.vendors : [emptyVendor()];
-    return {
-      vendors,
-      selectedVendorId: base.selectedVendorId || vendors[0]?.id || "",
-      selectedScenarioId: base.selectedScenarioId || vendors[0]?.scenarios?.[0]?.id || "",
-    };
+    const base = raw ? safeParse(raw, { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" }) : { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" };
+    return normalizeState(base);
   });
 
+  // Persist normalized state (prevents “bad shape” from living forever)
   useEffect(() => {
     try {
-      window.localStorage.setItem(LS_KEY, JSON.stringify(state));
+      window.localStorage.setItem(LS_KEY, JSON.stringify(normalizeState(state)));
     } catch {
       // ignore
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
   const vendors = Array.isArray(state.vendors) ? state.vendors : [];
 
-  // ensure a selected vendor exists
-  useEffect(() => {
-    if (!vendors.length) {
-      const v = emptyVendor();
-      setState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" });
-      return;
-    }
-    if (!state.selectedVendorId) {
-      setState((p) => ({ ...p, selectedVendorId: vendors[0]?.id || "" }));
-      return;
-    }
-    const exists = vendors.some((v) => v.id === state.selectedVendorId);
-    if (!exists) {
-      setState((p) => ({ ...p, selectedVendorId: vendors[0]?.id || "", selectedScenarioId: vendors[0]?.scenarios?.[0]?.id || "" }));
-    }
+  const selectedVendor = useMemo(() => {
+    return vendors.find((v) => v.id === state.selectedVendorId) || vendors[0] || null;
   }, [vendors, state.selectedVendorId]);
 
-  const selectedVendor = useMemo(
-    () => vendors.find((v) => v.id === state.selectedVendorId) || vendors[0] || null,
-    [vendors, state.selectedVendorId]
-  );
+  const selectedScenario = useMemo(() => {
+    if (!selectedVendor) return null;
+    return (selectedVendor.scenarios || []).find((s) => s.id === state.selectedScenarioId) || selectedVendor.scenarios?.[0] || null;
+  }, [selectedVendor, state.selectedScenarioId]);
 
-  // ---- Vendor create/edit UX state
+  // Keep selection valid if vendors change
+  useEffect(() => {
+    const next = normalizeState(state);
+    if (next.selectedVendorId !== state.selectedVendorId || next.selectedScenarioId !== state.selectedScenarioId || next.vendors.length !== vendors.length) {
+      setState(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendors.length]);
+
+  // Vendor create/edit UX state
   const [vendorForm, setVendorForm] = useState({ open: false, mode: "create", draft: null });
 
   const openCreateVendor = () => {
@@ -512,46 +502,47 @@ export default function Page() {
   const createVendor = () => {
     const d = vendorForm.draft;
     if (!d) return;
+
     const v = {
       ...d,
       id: uid(),
-      scenarios: Array.isArray(d.scenarios) && d.scenarios.length ? d.scenarios : [emptyScenario()],
       tiering: d.tiering || emptyTiering(),
+      scenarios: Array.isArray(d.scenarios) && d.scenarios.length ? d.scenarios : [emptyScenario()],
     };
-    setState((p) => ({
-      ...p,
-      vendors: [...(Array.isArray(p.vendors) ? p.vendors : []), v],
-      selectedVendorId: v.id,
-      selectedScenarioId: v.scenarios?.[0]?.id || "",
-    }));
+
+    setState((p) =>
+      normalizeState({
+        ...p,
+        vendors: [...(Array.isArray(p.vendors) ? p.vendors : []), v],
+        selectedVendorId: v.id,
+        selectedScenarioId: v.scenarios?.[0]?.id || "",
+      })
+    );
+
     closeVendorForm();
   };
 
   const saveVendor = () => {
     const d = vendorForm.draft;
     if (!d) return;
-    setState((p) => ({
-      ...p,
-      vendors: (Array.isArray(p.vendors) ? p.vendors : []).map((v) => (v.id === d.id ? { ...v, ...d } : v)),
-    }));
+
+    setState((p) =>
+      normalizeState({
+        ...p,
+        vendors: (Array.isArray(p.vendors) ? p.vendors : []).map((v) => (v.id === d.id ? { ...v, ...d } : v)),
+      })
+    );
+
     closeVendorForm();
   };
 
   const deleteVendor = (vendorId) => {
     setState((p) => {
       const next = (Array.isArray(p.vendors) ? p.vendors : []).filter((v) => v.id !== vendorId);
-      const fallback = next.length ? next : [emptyVendor()];
-      const sel = fallback[0];
-      return {
-        ...p,
-        vendors: fallback,
-        selectedVendorId: sel?.id || "",
-        selectedScenarioId: sel?.scenarios?.[0]?.id || "",
-      };
+      return normalizeState({ ...p, vendors: next, selectedVendorId: "", selectedScenarioId: "" });
     });
   };
 
-  // ---- Header/nav
   const tabs = [
     { k: "Vendors", label: "Vendors" },
     { k: "Tiering", label: "Tiering" },
@@ -567,14 +558,10 @@ export default function Page() {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div>
           <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.02em" }}>FAIR TPRM Training Tool</div>
-          <div style={{ marginTop: 6, opacity: 0.8 }}>
-            Training only — data stays in your browser.
-          </div>
+          <div style={{ marginTop: 6, opacity: 0.8 }}>Training only — data stays in your browser.</div>
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Pill>{vendors.length} vendor(s)</Pill>
-            <Pill>
-              {vendors.reduce((n, v) => n + (Array.isArray(v.scenarios) ? v.scenarios.length : 0), 0)} scenario(s)
-            </Pill>
+            <Pill>{vendors.reduce((n, v) => n + (Array.isArray(v.scenarios) ? v.scenarios.length : 0), 0)} scenario(s)</Pill>
             <Pill>Carry-forward: {vendors.filter((v) => !!v.carryForward).length}</Pill>
           </div>
         </div>
@@ -585,7 +572,7 @@ export default function Page() {
             onClick={() => {
               if (typeof window !== "undefined") window.localStorage.removeItem(LS_KEY);
               const v = emptyVendor();
-              setState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" });
+              setState(normalizeState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" }));
               setActiveView("Vendors");
               closeVendorForm();
             }}
@@ -636,7 +623,16 @@ export default function Page() {
           <VendorsView
             vendors={vendors}
             selectedVendorId={selectedVendor?.id || ""}
-            onSelectVendor={(id) => setState((p) => ({ ...p, selectedVendorId: id }))}
+            onSelectVendor={(id) => {
+              const v = vendors.find((x) => x.id === id) || vendors[0] || null;
+              setState((p) =>
+                normalizeState({
+                  ...p,
+                  selectedVendorId: id,
+                  selectedScenarioId: v?.scenarios?.[0]?.id || "",
+                })
+              );
+            }}
             onRequestCreate={openCreateVendor}
             onRequestEdit={openEditVendor}
             onDeleteVendor={deleteVendor}
@@ -645,28 +641,19 @@ export default function Page() {
         ) : activeView === "Tiering" ? (
           <PlaceholderView
             title="Tiering"
-            text="Tiering view placeholder (stable). Next step: we plug your full Tiering matrix here, using selectedVendor."
+            text={`Tiering view placeholder (stable). Selected vendor: ${selectedVendor?.name?.trim() ? selectedVendor.name : "(Unnamed)"} — scenario: ${selectedScenario?.title?.trim() ? selectedScenario.title : "(Untitled)"}`}
           />
         ) : activeView === "Quantify" ? (
           <PlaceholderView
             title="Quantify"
-            text="Quantify view placeholder (stable). Next step: we plug your FAIR-only form + engine outputs here."
+            text={`Quantify view placeholder (stable). Selected vendor: ${selectedVendor?.name?.trim() ? selectedVendor.name : "(Unnamed)"} — scenario: ${selectedScenario?.title?.trim() ? selectedScenario.title : "(Untitled)"}`}
           />
         ) : activeView === "Treatments" ? (
-          <PlaceholderView
-            title="Treatments"
-            text="Treatments view placeholder (stable). Next step: show auto-suggested treatments + manual edits."
-          />
+          <PlaceholderView title="Treatments" text="Treatments view placeholder (stable). Next: auto-suggest treatments + manual edits." />
         ) : activeView === "Decisions" ? (
-          <PlaceholderView
-            title="Decisions"
-            text="Decisions view placeholder (stable). Next step: decision status, approver, rationale, review date."
-          />
+          <PlaceholderView title="Decisions" text="Decisions view placeholder (stable). Next: decision status, approver, rationale, review date." />
         ) : activeView === "Dashboard" ? (
-          <PlaceholderView
-            title="Dashboard"
-            text="Dashboard view placeholder (stable). Next step: portfolio summary + heatmap + top risks."
-          />
+          <PlaceholderView title="Dashboard" text="Dashboard view placeholder (stable). Next: portfolio summary + heatmap + top risks." />
         ) : (
           <PlaceholderView title="Unknown view" text="This tab is not wired yet." />
         )}
