@@ -2,7 +2,76 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-const emptyDraft = () => ({
+/**
+ * page.js (single-file “Mode A”)
+ * UX goals:
+ * - Top nav = ONLY tabs (no duplicate “Add vendor” in the header)
+ * - Vendors tab:
+ *   - Left: vendor list + search + “Add vendor”
+ *   - Right: vendor details panel
+ *   - Add/Edit uses a dedicated form panel with “Create vendor” / “Save” / “Cancel”
+ * - Safe localStorage + safe defaults (no SSR/prerender crashes)
+ *
+ * Notes:
+ * - This file is self-contained (no imports from ./components needed).
+ * - If you already have other tabs (Quantify/Treatments/etc.), they are included as placeholders
+ *   so the app remains usable while you iterate. We’ll plug your real views afterward.
+ */
+
+const LS_KEY = "fair_tprm_training_v6";
+
+const uid = () => Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+
+const emptyTiering = () => ({
+  dataSensitivity: 1,
+  integrationDepth: 1,
+  accessPrivileges: 1,
+  historicalIncidents: 1,
+  businessCriticality: 1,
+});
+
+const tierIndex = (t) =>
+  Number(t?.dataSensitivity || 1) *
+  Number(t?.integrationDepth || 1) *
+  Number(t?.accessPrivileges || 1) *
+  Number(t?.historicalIncidents || 1) *
+  Number(t?.businessCriticality || 1);
+
+const emptyQuant = () => ({
+  level: "LEF",
+  lef: { min: "", ml: "", max: "" },
+  tef: { min: "", ml: "", max: "" },
+  contactFrequency: { min: "", ml: "", max: "" },
+  probabilityOfAction: { min: "", ml: "", max: "" },
+  susceptibility: { min: "", ml: "", max: "" },
+  threatCapacity: { min: "", ml: "", max: "" },
+  resistanceStrength: { min: "", ml: "", max: "" },
+  primaryLoss: { min: "", ml: "", max: "" },
+  secondaryLossEventFrequency: { min: "", ml: "", max: "" },
+  secondaryLossMagnitude: { min: "", ml: "", max: "" },
+  sims: 10000,
+  stats: null,
+  aleSamples: [],
+  pelSamples: [],
+  lastRunAt: "",
+});
+
+const emptyScenario = () => ({
+  id: uid(),
+  title: "",
+  assetAtRisk: "",
+  threatActor: "External cybercriminal",
+  attackVector: "",
+  lossEvent: "",
+  narrative: "",
+  assumptions: "",
+  quant: emptyQuant(),
+  treatments: [],
+  decision: { status: "", owner: "", approver: "", reviewDate: "", rationale: "" },
+});
+
+const emptyVendor = () => ({
+  id: uid(),
   name: "",
   category: "SaaS",
   businessOwner: "",
@@ -10,413 +79,597 @@ const emptyDraft = () => ({
   dataTypes: "",
   geography: "EU",
   dependencyLevel: "Medium",
+  tier: "",
+  tierRationale: "",
+  tiering: emptyTiering(),
+  carryForward: false,
+  scenarios: [emptyScenario()],
 });
 
-function Field({ label, children, hint }) {
+function safeParse(raw, fallback) {
+  try {
+    const x = JSON.parse(raw);
+    return x ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function Button({ className = "", ...props }) {
+  return <button {...props} className={className || "btn"} />;
+}
+
+function InputRow({ label, children }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div className="label">{label}</div>
+    <div style={{ display: "grid", gap: 6 }}>
+      <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>{label}</div>
       {children}
-      {hint ? <div style={{ fontSize: 12, opacity: 0.75 }}>{hint}</div> : null}
     </div>
   );
 }
 
-export default function VendorsView({
-  vendors,
-  selectedVendorId,
-  onSelectVendor,
-  onAddVendor,
-  onUpdateVendor,
-  onDeleteVendor,
-}) {
-  const list = Array.isArray(vendors) ? vendors : [];
-
-  const selected = useMemo(() => {
-    return list.find((v) => v.id === selectedVendorId) || list[0] || null;
-  }, [list, selectedVendorId]);
-
-  // UI modes
-  const [mode, setMode] = useState("list"); // "list" | "create" | "edit"
-  const [draft, setDraft] = useState(emptyDraft());
-
-  // When switching vendor, return to list
-  useEffect(() => {
-    setMode("list");
-  }, [selectedVendorId]);
-
-  const startCreate = () => {
-    setDraft(emptyDraft());
-    setMode("create");
-  };
-
-  const startEdit = () => {
-    if (!selected) return;
-    setDraft({
-      name: selected.name || "",
-      category: selected.category || "SaaS",
-      businessOwner: selected.businessOwner || "",
-      criticalFunction: selected.criticalFunction || "",
-      dataTypes: selected.dataTypes || "",
-      geography: selected.geography || "EU",
-      dependencyLevel: selected.dependencyLevel || "Medium",
-    });
-    setMode("edit");
-  };
-
-  const cancel = () => {
-    setMode("list");
-    setDraft(emptyDraft());
-  };
-
-  const canSubmit = draft.name.trim().length > 0;
-
-  const submitCreate = () => {
-    if (!canSubmit) return;
-    onAddVendor({
-      ...draft,
-      name: draft.name.trim(),
-    });
-    setMode("list");
-    setDraft(emptyDraft());
-  };
-
-  const submitEdit = () => {
-    if (!selected) return;
-    if (!canSubmit) return;
-
-    onUpdateVendor(selected.id, {
-      ...draft,
-      name: draft.name.trim(),
-    });
-
-    setMode("list");
-    setDraft(emptyDraft());
-  };
-
+function Pill({ children }) {
   return (
-    <div className="grid" style={{ alignItems: "start" }}>
-      {/* LEFT: Vendors list */}
-      <div className="col6">
-        <div className="card card-pad">
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-            <div>
-              <div style={{ fontWeight: 900, fontSize: 16 }}>Vendors</div>
-              <div style={{ opacity: 0.75, marginTop: 4, fontSize: 13 }}>
-                Sélectionne un vendor, ou crée-en un nouveau.
-              </div>
-            </div>
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "4px 10px",
+        borderRadius: 999,
+        border: "1px solid rgba(255,255,255,0.14)",
+        background: "rgba(255,255,255,0.06)",
+        fontSize: 12,
+        opacity: 0.95,
+        gap: 6,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
 
-            <button className="btn primary" onClick={startCreate} type="button">
-              Add vendor
-            </button>
+function Card({ children, style }) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(255,255,255,0.12)",
+        background: "rgba(0,0,0,0.18)",
+        borderRadius: 16,
+        padding: 16,
+        backdropFilter: "blur(8px)",
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
+  // mode: "create" | "edit"
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900 }}>
+            {mode === "create" ? "Create a new vendor" : "Edit vendor"}
           </div>
-
-          <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-            {list.length === 0 ? (
-              <div className="hint">Aucun vendor pour l’instant.</div>
-            ) : (
-              list.map((v) => {
-                const active = v.id === (selected?.id || "");
-                return (
-                  <button
-                    key={v.id}
-                    type="button"
-                    onClick={() => onSelectVendor(v.id)}
-                    className="card"
-                    style={{
-                      padding: 12,
-                      textAlign: "left",
-                      cursor: "pointer",
-                      border: active ? "1px solid rgba(110,231,255,0.40)" : "1px solid rgba(255,255,255,0.10)",
-                      background: active ? "rgba(110,231,255,0.06)" : "rgba(255,255,255,0.03)",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-                      <div style={{ fontWeight: 900 }}>
-                        {v.name?.trim() ? v.name : "(Unnamed vendor)"}
-                      </div>
-                      <div style={{ fontSize: 12, opacity: 0.7 }}>{v.category || "—"}</div>
-                    </div>
-
-                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                      {v.geography || "—"} · Dependency: {v.dependencyLevel || "—"}
-                    </div>
-
-                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
-                      Scenarios: {v.scenarios?.length || 0}
-                    </div>
-                  </button>
-                );
-              })
-            )}
+          <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
+            Fill in the minimum required fields first. You can refine later.
           </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Button onClick={onCancel} className="btn">
+            Cancel
+          </Button>
+          <Button onClick={onSubmit} className="btn primary">
+            {mode === "create" ? "Create vendor" : "Save changes"}
+          </Button>
         </div>
       </div>
 
-      {/* RIGHT: Details / Create / Edit */}
-      <div className="col6">
-        {/* Create */}
-        {mode === "create" ? (
-          <div className="card card-pad">
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-              <div>
-                <div style={{ fontWeight: 900, fontSize: 16 }}>Create vendor</div>
-                <div style={{ opacity: 0.75, marginTop: 4, fontSize: 13 }}>
-                  Remplis les infos minimales, puis crée le vendor.
-                </div>
-              </div>
+      <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <InputRow label="Vendor name">
+          <input
+            className="input"
+            value={draft.name}
+            onChange={(e) => onChange({ ...draft, name: e.target.value })}
+            placeholder="Example: TalentLMS"
+          />
+        </InputRow>
 
-              <button className="btn" onClick={cancel} type="button">
-                Cancel
-              </button>
-            </div>
+        <InputRow label="Category">
+          <select
+            className="input"
+            value={draft.category}
+            onChange={(e) => onChange({ ...draft, category: e.target.value })}
+          >
+            {["SaaS", "Cloud", "MSP", "Payment", "Data processor", "AI provider", "Other"].map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        </InputRow>
 
-            <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
-              <Field label="Vendor name" hint="Requis">
-                <input
-                  className="input"
-                  value={draft.name}
-                  onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-                  placeholder="Ex: Salesforce"
-                />
-              </Field>
+        <InputRow label="Business owner">
+          <input
+            className="input"
+            value={draft.businessOwner}
+            onChange={(e) => onChange({ ...draft, businessOwner: e.target.value })}
+            placeholder="Example: Head of Sales Ops"
+          />
+        </InputRow>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <Field label="Category">
-                  <select
-                    className="input"
-                    value={draft.category}
-                    onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))}
-                  >
-                    {["SaaS", "Cloud", "MSP", "Payment", "Data processor", "AI provider", "Other"].map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </Field>
+        <InputRow label="Geography">
+          <select
+            className="input"
+            value={draft.geography}
+            onChange={(e) => onChange({ ...draft, geography: e.target.value })}
+          >
+            {["EU", "US", "UK", "Global", "Other"].map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        </InputRow>
 
-                <Field label="Geography">
-                  <select
-                    className="input"
-                    value={draft.geography}
-                    onChange={(e) => setDraft((d) => ({ ...d, geography: e.target.value }))}
-                  >
-                    {["EU", "US", "UK", "Global", "Other"].map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <InputRow label="Critical business function supported">
+            <input
+              className="input"
+              value={draft.criticalFunction}
+              onChange={(e) => onChange({ ...draft, criticalFunction: e.target.value })}
+              placeholder="Example: Customer acquisition & retention"
+            />
+          </InputRow>
+        </div>
 
-              <Field label="Business owner">
-                <input
-                  className="input"
-                  value={draft.businessOwner}
-                  onChange={(e) => setDraft((d) => ({ ...d, businessOwner: e.target.value }))}
-                  placeholder="Ex: Head of Sales Ops"
-                />
-              </Field>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <InputRow label="Data types processed">
+            <textarea
+              className="textarea"
+              value={draft.dataTypes}
+              onChange={(e) => onChange({ ...draft, dataTypes: e.target.value })}
+              placeholder="Example: Customer PII, order history, support tickets"
+              rows={5}
+            />
+          </InputRow>
+        </div>
 
-              <Field label="Critical business function supported">
-                <input
-                  className="input"
-                  value={draft.criticalFunction}
-                  onChange={(e) => setDraft((d) => ({ ...d, criticalFunction: e.target.value }))}
-                  placeholder="Ex: Customer acquisition and retention"
-                />
-              </Field>
+        <InputRow label="Dependency level">
+          <select
+            className="input"
+            value={draft.dependencyLevel}
+            onChange={(e) => onChange({ ...draft, dependencyLevel: e.target.value })}
+          >
+            {["Low", "Medium", "High"].map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        </InputRow>
 
-              <Field label="Data types accessed or processed">
-                <textarea
-                  className="textarea"
-                  value={draft.dataTypes}
-                  onChange={(e) => setDraft((d) => ({ ...d, dataTypes: e.target.value }))}
-                  placeholder="Ex: PII, billing data, support tickets"
-                />
-              </Field>
+        <InputRow label="Carry-forward (for deeper analysis)">
+          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, opacity: 0.9 }}>
+            <input
+              type="checkbox"
+              checked={!!draft.carryForward}
+              onChange={(e) => onChange({ ...draft, carryForward: e.target.checked })}
+            />
+            Carry-forward
+          </label>
+        </InputRow>
 
-              <Field label="Dependency level">
-                <select
-                  className="input"
-                  value={draft.dependencyLevel}
-                  onChange={(e) => setDraft((d) => ({ ...d, dependencyLevel: e.target.value }))}
+        <div style={{ gridColumn: "1 / -1", marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+          Tip: Create the vendor first, then go to Tiering and Quantify with scenarios.
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function VendorsView({
+  vendors,
+  selectedVendorId,
+  onSelectVendor,
+  onRequestCreate,
+  onRequestEdit,
+  onDeleteVendor,
+  onGoTiering,
+}) {
+  const [q, setQ] = useState("");
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return vendors;
+    return vendors.filter((v) => (v.name || "").toLowerCase().includes(s) || (v.category || "").toLowerCase().includes(s));
+  }, [vendors, q]);
+
+  const selected = useMemo(() => vendors.find((v) => v.id === selectedVendorId) || null, [vendors, selectedVendorId]);
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 14, alignItems: "start" }}>
+      {/* Left list */}
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 900 }}>Vendors</div>
+          <Button className="btn primary" onClick={onRequestCreate}>
+            + Add vendor
+          </Button>
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <input
+            className="input"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search vendor…"
+          />
+        </div>
+
+        <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+          {filtered.length === 0 ? (
+            <div style={{ fontSize: 13, opacity: 0.8, padding: "10px 0" }}>No vendors found.</div>
+          ) : (
+            filtered.map((v) => {
+              const isActive = v.id === selectedVendorId;
+              const scenarioCount = Array.isArray(v.scenarios) ? v.scenarios.length : 0;
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => onSelectVendor(v.id)}
+                  style={{
+                    textAlign: "left",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: isActive ? "rgba(59,130,246,0.18)" : "rgba(255,255,255,0.05)",
+                    borderRadius: 14,
+                    padding: 12,
+                    cursor: "pointer",
+                  }}
                 >
-                  {["Low", "Medium", "High"].map((x) => (
-                    <option key={x} value={x}>{x}</option>
-                  ))}
-                </select>
-              </Field>
-
-              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 6 }}>
-                <button className="btn" onClick={cancel} type="button">
-                  Cancel
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ fontWeight: 900 }}>{v.name?.trim() ? v.name : "(Unnamed vendor)"}</div>
+                    <div style={{ fontSize: 12, opacity: 0.8 }}>{v.category}</div>
+                  </div>
+                  <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Pill>Index: {tierIndex(v.tiering || emptyTiering())}</Pill>
+                    <Pill>{scenarioCount} scenario(s)</Pill>
+                    <Pill>{v.carryForward ? "Carry-forward" : "Not carried"}</Pill>
+                  </div>
                 </button>
-                <button className={`btn primary`} onClick={submitCreate} disabled={!canSubmit} type="button">
-                  Create vendor
-                </button>
-              </div>
+              );
+            })
+          )}
+        </div>
+      </Card>
 
-              {!canSubmit ? <div className="hint">Le nom du vendor est requis.</div> : null}
-            </div>
+      {/* Right details */}
+      <Card>
+        {!selected ? (
+          <div style={{ fontSize: 14, opacity: 0.85 }}>
+            Select a vendor on the left, or click <strong>Add vendor</strong>.
           </div>
-        ) : null}
-
-        {/* Edit */}
-        {mode === "edit" && selected ? (
-          <div className="card card-pad">
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        ) : (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div>
-                <div style={{ fontWeight: 900, fontSize: 16 }}>Edit vendor</div>
-                <div style={{ opacity: 0.75, marginTop: 4, fontSize: 13 }}>
-                  Modifie puis sauvegarde.
+                <div style={{ fontSize: 20, fontWeight: 950 }}>
+                  {selected.name?.trim() ? selected.name : "(Unnamed vendor)"}
+                </div>
+                <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <Pill>{selected.category}</Pill>
+                  <Pill>{selected.geography}</Pill>
+                  <Pill>Dependency: {selected.dependencyLevel}</Pill>
+                  <Pill>Tier: {selected.tier || "—"}</Pill>
                 </div>
               </div>
 
-              <button className="btn" onClick={cancel} type="button">
-                Cancel
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <Button className="btn" onClick={() => onRequestEdit(selected.id)}>
+                  Edit
+                </Button>
+                <Button className="btn" onClick={() => onDeleteVendor(selected.id)}>
+                  Delete
+                </Button>
+                <Button className="btn primary" onClick={onGoTiering}>
+                  Go to tiering →
+                </Button>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Card style={{ padding: 12 }}>
+                <div style={{ fontWeight: 900, marginBottom: 6 }}>Critical function</div>
+                <div style={{ fontSize: 13, opacity: 0.9, whiteSpace: "pre-wrap" }}>
+                  {selected.criticalFunction?.trim() ? selected.criticalFunction : "—"}
+                </div>
+              </Card>
+
+              <Card style={{ padding: 12 }}>
+                <div style={{ fontWeight: 900, marginBottom: 6 }}>Business owner</div>
+                <div style={{ fontSize: 13, opacity: 0.9 }}>
+                  {selected.businessOwner?.trim() ? selected.businessOwner : "—"}
+                </div>
+              </Card>
+
+              <Card style={{ padding: 12, gridColumn: "1 / -1" }}>
+                <div style={{ fontWeight: 900, marginBottom: 6 }}>Data types</div>
+                <div style={{ fontSize: 13, opacity: 0.9, whiteSpace: "pre-wrap" }}>
+                  {selected.dataTypes?.trim() ? selected.dataTypes : "—"}
+                </div>
+              </Card>
+
+              <Card style={{ padding: 12 }}>
+                <div style={{ fontWeight: 900, marginBottom: 6 }}>Scenarios</div>
+                <div style={{ fontSize: 13, opacity: 0.9 }}>
+                  {Array.isArray(selected.scenarios) && selected.scenarios.length
+                    ? selected.scenarios.map((s) => (s.title?.trim() ? s.title : "(Untitled scenario)")).join(" • ")
+                    : "—"}
+                </div>
+              </Card>
+
+              <Card style={{ padding: 12 }}>
+                <div style={{ fontWeight: 900, marginBottom: 6 }}>Prioritization</div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 13, opacity: 0.9 }}>Index: {tierIndex(selected.tiering || emptyTiering())}</div>
+                  <div style={{ fontSize: 13, opacity: 0.9 }}>
+                    Carry-forward: {selected.carryForward ? "Yes" : "No"}
+                  </div>
+                </div>
+              </Card>
+            </div>
+          </>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function PlaceholderView({ title, text }) {
+  return (
+    <Card>
+      <div style={{ fontSize: 18, fontWeight: 900 }}>{title}</div>
+      <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>{text}</div>
+    </Card>
+  );
+}
+
+export default function Page() {
+  const [activeView, setActiveView] = useState("Vendors");
+
+  // persisted app state
+  const [state, setState] = useState(() => {
+    // Important: do NOT assume window exists (avoids prerender crashes)
+    if (typeof window === "undefined") {
+      return { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" };
+    }
+    const raw = window.localStorage.getItem(LS_KEY);
+    const base = raw
+      ? safeParse(raw, { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" })
+      : { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" };
+
+    // normalize
+    const vendors = Array.isArray(base.vendors) && base.vendors.length ? base.vendors : [emptyVendor()];
+    return {
+      vendors,
+      selectedVendorId: base.selectedVendorId || vendors[0]?.id || "",
+      selectedScenarioId: base.selectedScenarioId || vendors[0]?.scenarios?.[0]?.id || "",
+    };
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LS_KEY, JSON.stringify(state));
+    } catch {
+      // ignore
+    }
+  }, [state]);
+
+  const vendors = Array.isArray(state.vendors) ? state.vendors : [];
+
+  // ensure a selected vendor exists
+  useEffect(() => {
+    if (!vendors.length) {
+      const v = emptyVendor();
+      setState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" });
+      return;
+    }
+    if (!state.selectedVendorId) {
+      setState((p) => ({ ...p, selectedVendorId: vendors[0]?.id || "" }));
+      return;
+    }
+    const exists = vendors.some((v) => v.id === state.selectedVendorId);
+    if (!exists) {
+      setState((p) => ({ ...p, selectedVendorId: vendors[0]?.id || "", selectedScenarioId: vendors[0]?.scenarios?.[0]?.id || "" }));
+    }
+  }, [vendors, state.selectedVendorId]);
+
+  const selectedVendor = useMemo(
+    () => vendors.find((v) => v.id === state.selectedVendorId) || vendors[0] || null,
+    [vendors, state.selectedVendorId]
+  );
+
+  // ---- Vendor create/edit UX state
+  const [vendorForm, setVendorForm] = useState({ open: false, mode: "create", draft: null });
+
+  const openCreateVendor = () => {
+    setVendorForm({ open: true, mode: "create", draft: { ...emptyVendor(), scenarios: [emptyScenario()] } });
+  };
+
+  const openEditVendor = (vendorId) => {
+    const v = vendors.find((x) => x.id === vendorId);
+    if (!v) return;
+    setVendorForm({ open: true, mode: "edit", draft: JSON.parse(JSON.stringify(v)) });
+  };
+
+  const closeVendorForm = () => setVendorForm({ open: false, mode: "create", draft: null });
+
+  const createVendor = () => {
+    const d = vendorForm.draft;
+    if (!d) return;
+    const v = {
+      ...d,
+      id: uid(),
+      scenarios: Array.isArray(d.scenarios) && d.scenarios.length ? d.scenarios : [emptyScenario()],
+      tiering: d.tiering || emptyTiering(),
+    };
+    setState((p) => ({
+      ...p,
+      vendors: [...(Array.isArray(p.vendors) ? p.vendors : []), v],
+      selectedVendorId: v.id,
+      selectedScenarioId: v.scenarios?.[0]?.id || "",
+    }));
+    closeVendorForm();
+  };
+
+  const saveVendor = () => {
+    const d = vendorForm.draft;
+    if (!d) return;
+    setState((p) => ({
+      ...p,
+      vendors: (Array.isArray(p.vendors) ? p.vendors : []).map((v) => (v.id === d.id ? { ...v, ...d } : v)),
+    }));
+    closeVendorForm();
+  };
+
+  const deleteVendor = (vendorId) => {
+    setState((p) => {
+      const next = (Array.isArray(p.vendors) ? p.vendors : []).filter((v) => v.id !== vendorId);
+      const fallback = next.length ? next : [emptyVendor()];
+      const sel = fallback[0];
+      return {
+        ...p,
+        vendors: fallback,
+        selectedVendorId: sel?.id || "",
+        selectedScenarioId: sel?.scenarios?.[0]?.id || "",
+      };
+    });
+  };
+
+  // ---- Header/nav
+  const tabs = [
+    { k: "Vendors", label: "Vendors" },
+    { k: "Tiering", label: "Tiering" },
+    { k: "Quantify", label: "Quantify" },
+    { k: "Treatments", label: "Treatments" },
+    { k: "Decisions", label: "Decisions" },
+    { k: "Dashboard", label: "Dashboard" },
+  ];
+
+  return (
+    <div className="container" style={{ padding: 22, maxWidth: 1200, margin: "0 auto" }}>
+      {/* Title */}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.02em" }}>FAIR TPRM Training Tool</div>
+          <div style={{ marginTop: 6, opacity: 0.8 }}>
+            Training only — data stays in your browser.
+          </div>
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Pill>{vendors.length} vendor(s)</Pill>
+            <Pill>
+              {vendors.reduce((n, v) => n + (Array.isArray(v.scenarios) ? v.scenarios.length : 0), 0)} scenario(s)
+            </Pill>
+            <Pill>Carry-forward: {vendors.filter((v) => !!v.carryForward).length}</Pill>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Button
+            className="btn"
+            onClick={() => {
+              if (typeof window !== "undefined") window.localStorage.removeItem(LS_KEY);
+              const v = emptyVendor();
+              setState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" });
+              setActiveView("Vendors");
+              closeVendorForm();
+            }}
+          >
+            Reset
+          </Button>
+        </div>
+      </div>
+
+      {/* Tabs (no “Add vendor” here) */}
+      <div style={{ marginTop: 14 }}>
+        <Card style={{ padding: 10 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {tabs.map((t) => (
+              <button
+                key={t.k}
+                onClick={() => setActiveView(t.k)}
+                style={{
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: activeView === t.k ? "rgba(59,130,246,0.22)" : "rgba(255,255,255,0.06)",
+                  color: "inherit",
+                  borderRadius: 999,
+                  padding: "8px 12px",
+                  cursor: "pointer",
+                  fontWeight: 800,
+                  fontSize: 13,
+                  opacity: activeView === t.k ? 1 : 0.92,
+                }}
+              >
+                {t.label}
               </button>
-            </div>
-
-            <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
-              <Field label="Vendor name" hint="Requis">
-                <input
-                  className="input"
-                  value={draft.name}
-                  onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-                />
-              </Field>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <Field label="Category">
-                  <select
-                    className="input"
-                    value={draft.category}
-                    onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))}
-                  >
-                    {["SaaS", "Cloud", "MSP", "Payment", "Data processor", "AI provider", "Other"].map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field label="Geography">
-                  <select
-                    className="input"
-                    value={draft.geography}
-                    onChange={(e) => setDraft((d) => ({ ...d, geography: e.target.value }))}
-                  >
-                    {["EU", "US", "UK", "Global", "Other"].map((x) => (
-                      <option key={x} value={x}>{x}</option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-
-              <Field label="Business owner">
-                <input
-                  className="input"
-                  value={draft.businessOwner}
-                  onChange={(e) => setDraft((d) => ({ ...d, businessOwner: e.target.value }))}
-                />
-              </Field>
-
-              <Field label="Critical business function supported">
-                <input
-                  className="input"
-                  value={draft.criticalFunction}
-                  onChange={(e) => setDraft((d) => ({ ...d, criticalFunction: e.target.value }))}
-                />
-              </Field>
-
-              <Field label="Data types accessed or processed">
-                <textarea
-                  className="textarea"
-                  value={draft.dataTypes}
-                  onChange={(e) => setDraft((d) => ({ ...d, dataTypes: e.target.value }))}
-                />
-              </Field>
-
-              <Field label="Dependency level">
-                <select
-                  className="input"
-                  value={draft.dependencyLevel}
-                  onChange={(e) => setDraft((d) => ({ ...d, dependencyLevel: e.target.value }))}
-                >
-                  {["Low", "Medium", "High"].map((x) => (
-                    <option key={x} value={x}>{x}</option>
-                  ))}
-                </select>
-              </Field>
-
-              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 6 }}>
-                <button className="btn" onClick={cancel} type="button">
-                  Cancel
-                </button>
-                <button className="btn primary" onClick={submitEdit} disabled={!canSubmit} type="button">
-                  Save changes
-                </button>
-              </div>
-
-              {!canSubmit ? <div className="hint">Le nom du vendor est requis.</div> : null}
-            </div>
+            ))}
           </div>
-        ) : null}
+        </Card>
+      </div>
 
-        {/* Details (default) */}
-        {mode === "list" ? (
-          <div className="card card-pad">
-            {!selected ? (
-              <div className="hint">Sélectionne un vendor dans la liste ou clique “Add vendor”.</div>
-            ) : (
-              <>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-                  <div>
-                    <div style={{ fontWeight: 900, fontSize: 18 }}>
-                      {selected.name?.trim() ? selected.name : "(Unnamed vendor)"}
-                    </div>
-                    <div style={{ opacity: 0.75, marginTop: 6 }}>
-                      {selected.category || "—"} · {selected.geography || "—"} · Dependency:{" "}
-                      {selected.dependencyLevel || "—"}
-                    </div>
-                  </div>
-
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button className="btn" onClick={startEdit} type="button">
-                      Edit
-                    </button>
-                    <button className="btn" onClick={() => onDeleteVendor(selected.id)} type="button">
-                      Delete
-                    </button>
-                  </div>
-                </div>
-
-                <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
-                  <div className="hint">
-                    <div style={{ fontWeight: 800 }}>Business owner</div>
-                    <div style={{ marginTop: 4 }}>{selected.businessOwner?.trim() ? selected.businessOwner : "—"}</div>
-                  </div>
-
-                  <div className="hint">
-                    <div style={{ fontWeight: 800 }}>Critical business function</div>
-                    <div style={{ marginTop: 4 }}>{selected.criticalFunction?.trim() ? selected.criticalFunction : "—"}</div>
-                  </div>
-
-                  <div className="hint">
-                    <div style={{ fontWeight: 800 }}>Data types</div>
-                    <div style={{ marginTop: 4, whiteSpace: "pre-wrap" }}>
-                      {selected.dataTypes?.trim() ? selected.dataTypes : "—"}
-                    </div>
-                  </div>
-
-                  <div className="hint">
-                    <div style={{ fontWeight: 800 }}>Scenarios</div>
-                    <div style={{ marginTop: 4 }}>{selected.scenarios?.length || 0} scenario(s)</div>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        ) : null}
+      {/* Main */}
+      <div style={{ marginTop: 14 }}>
+        {vendorForm.open ? (
+          <VendorForm
+            mode={vendorForm.mode}
+            draft={vendorForm.draft}
+            onChange={(next) => setVendorForm((p) => ({ ...p, draft: next }))}
+            onCancel={closeVendorForm}
+            onSubmit={vendorForm.mode === "create" ? createVendor : saveVendor}
+          />
+        ) : activeView === "Vendors" ? (
+          <VendorsView
+            vendors={vendors}
+            selectedVendorId={selectedVendor?.id || ""}
+            onSelectVendor={(id) => setState((p) => ({ ...p, selectedVendorId: id }))}
+            onRequestCreate={openCreateVendor}
+            onRequestEdit={openEditVendor}
+            onDeleteVendor={deleteVendor}
+            onGoTiering={() => setActiveView("Tiering")}
+          />
+        ) : activeView === "Tiering" ? (
+          <PlaceholderView
+            title="Tiering"
+            text="Tiering view placeholder (stable). Next step: we plug your full Tiering matrix here, using selectedVendor."
+          />
+        ) : activeView === "Quantify" ? (
+          <PlaceholderView
+            title="Quantify"
+            text="Quantify view placeholder (stable). Next step: we plug your FAIR-only form + engine outputs here."
+          />
+        ) : activeView === "Treatments" ? (
+          <PlaceholderView
+            title="Treatments"
+            text="Treatments view placeholder (stable). Next step: show auto-suggested treatments + manual edits."
+          />
+        ) : activeView === "Decisions" ? (
+          <PlaceholderView
+            title="Decisions"
+            text="Decisions view placeholder (stable). Next step: decision status, approver, rationale, review date."
+          />
+        ) : activeView === "Dashboard" ? (
+          <PlaceholderView
+            title="Dashboard"
+            text="Dashboard view placeholder (stable). Next step: portfolio summary + heatmap + top risks."
+          />
+        ) : (
+          <PlaceholderView title="Unknown view" text="This tab is not wired yet." />
+        )}
       </div>
     </div>
   );
