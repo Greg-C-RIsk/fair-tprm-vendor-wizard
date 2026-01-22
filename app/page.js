@@ -2,72 +2,37 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-// IMPORTS DES VUES
+/* ================================
+   IMPORTS DES VIEWS
+   (doivent exister dans /components)
+   ================================ */
+
 import VendorsView from "./components/VendorsView";
 import TieringView from "./components/TieringView";
 import QuantifyView from "./components/QuantifyView";
+import TreatmentsView from "./components/TreatmentsView";
+import DecisionsView from "./components/DecisionsView";
+import DashboardView from "./components/DashboardView";
 
-// ---------------------------------------------
-// Utils
-// ---------------------------------------------
+/* ================================
+   CONSTANTS & HELPERS
+   ================================ */
 
-const LS_KEY = "fair_tprm_training_debug_v1";
+const STORAGE_KEY = "fair-tprm-state";
 
 const uid = () =>
-  Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+  Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-// ---------------------------------------------
-// Data factories (STABLES)
-// ---------------------------------------------
-
-const emptyTiering = () => ({
-  dataSensitivity: 1,
-  integrationDepth: 1,
-  accessPrivileges: 1,
-  historicalIncidents: 1,
-  businessCriticality: 1,
-});
-
-const emptyQuant = () => ({
-  level: "LEF",
-
-  // fréquence
-  lef: { min: "", ml: "", max: "" },
-  tef: { min: "", ml: "", max: "" },
-  contactFrequency: { min: "", ml: "", max: "" },
-  probabilityOfAction: { min: "", ml: "", max: "" },
-  susceptibility: { min: "", ml: "", max: "" },
-
-  // capacité / résistance
-  threatCapacity: { min: "", ml: "", max: "" },
-  resistanceStrength: { min: "", ml: "", max: "" },
-
-  // pertes
-  primaryLoss: { min: "", ml: "", max: "" },
-  secondaryLossEventFrequency: { min: "", ml: "", max: "" },
-  secondaryLossMagnitude: { min: "", ml: "", max: "" },
-
-  sims: 10000,
-  stats: null,
-  aleSamples: [],
-  pelSamples: [],
-  lastRunAt: "",
-});
+/* ================================
+   EMPTY MODELS (CRITICAL)
+   ================================ */
 
 const emptyScenario = () => ({
   id: uid(),
   title: "",
-  assetAtRisk: "",
-  attackVector: "",
-  lossEvent: "",
-  narrative: "",
-  quant: emptyQuant(),
+  quant: {},
   treatments: [],
-  decision: {
-    status: "",
-    owner: "",
-    rationale: "",
-  },
+  decision: {},
 });
 
 const emptyVendor = () => ({
@@ -76,155 +41,206 @@ const emptyVendor = () => ({
   category: "SaaS",
   criticalFunction: "",
   dataTypes: "",
-  tiering: emptyTiering(),
-  carryForward: false,
   scenarios: [],
+  tiering: {},
 });
 
-// ---------------------------------------------
-// Page
-// ---------------------------------------------
+/* ================================
+   INITIAL STATE (SERVER SAFE)
+   ================================ */
+
+const initialState = {
+  vendors: [],
+  selectedVendorId: null,
+  selectedScenarioId: null,
+  activeView: "Vendors",
+};
+
+/* ================================
+   PAGE
+   ================================ */
 
 export default function Page() {
-  const [activeView, setActiveView] = useState("Vendors");
+  const [state, setState] = useState(initialState);
 
-  const [state, setState] = useState(() => {
-    if (typeof window === "undefined") {
-      return {
-        vendors: [emptyVendor()],
-        selectedVendorId: "",
-        selectedScenarioId: "",
-      };
-    }
-
-    try {
-      const raw = window.localStorage.getItem(LS_KEY);
-      if (!raw) {
-        return {
-          vendors: [emptyVendor()],
-          selectedVendorId: "",
-          selectedScenarioId: "",
-        };
-      }
-      return JSON.parse(raw);
-    } catch {
-      return {
-        vendors: [emptyVendor()],
-        selectedVendorId: "",
-        selectedScenarioId: "",
-      };
-    }
-  });
-
-  // Persist state
+  /* ------------------------------
+     HYDRATION SAFE LOAD
+     ------------------------------ */
   useEffect(() => {
-    window.localStorage.setItem(LS_KEY, JSON.stringify(state));
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+
+      setState({
+        vendors: Array.isArray(parsed.vendors) ? parsed.vendors : [],
+        selectedVendorId: parsed.selectedVendorId || null,
+        selectedScenarioId: parsed.selectedScenarioId || null,
+        activeView: parsed.activeView || "Vendors",
+      });
+    } catch {
+      // ignore corrupted storage
+    }
+  }, []);
+
+  /* ------------------------------
+     PERSISTENCE
+     ------------------------------ */
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // ignore quota / private mode
+    }
   }, [state]);
 
-  const vendors = state.vendors;
+  /* ================================
+     DERIVED STATE (DEFENSIVE)
+     ================================ */
+
+  const vendors = state.vendors || [];
 
   const selectedVendor = useMemo(() => {
-    return vendors.find((v) => v.id === state.selectedVendorId) || vendors[0];
+    return (
+      vendors.find((v) => v.id === state.selectedVendorId) || null
+    );
   }, [vendors, state.selectedVendorId]);
 
   const selectedScenario = useMemo(() => {
     if (!selectedVendor) return null;
     return (
-      selectedVendor.scenarios.find(
+      (selectedVendor.scenarios || []).find(
         (s) => s.id === state.selectedScenarioId
-      ) || selectedVendor.scenarios[0]
+      ) || null
     );
   }, [selectedVendor, state.selectedScenarioId]);
 
-  // ---------------------------------------------
-  // Mutators (SAFE)
-  // ---------------------------------------------
+  /* ================================
+     ACTIONS
+     ================================ */
+
+  const setActiveView = (view) =>
+    setState((s) => ({ ...s, activeView: view }));
 
   const addVendor = () => {
     const v = emptyVendor();
-    setState((prev) => ({
-      ...prev,
-      vendors: [...prev.vendors, v],
+    setState((s) => ({
+      ...s,
+      vendors: [...s.vendors, v],
       selectedVendorId: v.id,
-      selectedScenarioId: "",
+      selectedScenarioId: null,
+      activeView: "Vendors",
     }));
   };
 
   const updateVendor = (vendorId, patch) => {
-    setState((prev) => ({
-      ...prev,
-      vendors: prev.vendors.map((v) =>
+    setState((s) => ({
+      ...s,
+      vendors: s.vendors.map((v) =>
         v.id === vendorId ? { ...v, ...patch } : v
       ),
     }));
   };
 
   const addScenario = (vendorId) => {
-    const s = emptyScenario();
-    setState((prev) => ({
-      ...prev,
-      vendors: prev.vendors.map((v) =>
+    const sc = emptyScenario();
+    setState((s) => ({
+      ...s,
+      vendors: s.vendors.map((v) =>
         v.id === vendorId
-          ? { ...v, scenarios: [...v.scenarios, s] }
+          ? { ...v, scenarios: [...(v.scenarios || []), sc] }
           : v
       ),
-      selectedScenarioId: s.id,
+      selectedScenarioId: sc.id,
+      activeView: "Quantify",
     }));
   };
 
-  const updateScenario = (vendorId, scenarioId, patch) => {
-    setState((prev) => ({
-      ...prev,
-      vendors: prev.vendors.map((v) =>
-        v.id !== vendorId
-          ? v
-          : {
-              ...v,
-              scenarios: v.scenarios.map((s) =>
-                s.id === scenarioId ? { ...s, ...patch } : s
-              ),
-            }
-      ),
-    }));
-  };
-
-  // ---------------------------------------------
-  // Render
-  // ---------------------------------------------
+  /* ================================
+     RENDER
+     ================================ */
 
   return (
     <div className="container">
-      <h1>FAIR TPRM Training Tool</h1>
+      {/* HEADER */}
+      <header style={{ marginBottom: 24 }}>
+        <h1>FAIR TPRM Training Tool</h1>
 
-      <div style={{ marginBottom: 20 }}>
-        <button onClick={() => setActiveView("Vendors")}>Vendors</button>
-        <button onClick={() => setActiveView("Tiering")}>Tiering</button>
-        <button onClick={() => setActiveView("Quantify")}>Quantify</button>
-        <button onClick={addVendor}>Add vendor</button>
-      </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {["Vendors", "Tiering", "Quantify", "Treatments", "Decisions", "Dashboard"].map(
+            (v) => (
+              <button
+                key={v}
+                onClick={() => setActiveView(v)}
+                disabled={
+                  (v !== "Vendors" && !selectedVendor) ||
+                  (v === "Quantify" && !selectedScenario)
+                }
+              >
+                {v}
+              </button>
+            )
+          )}
 
-      {activeView === "Vendors" && selectedVendor && (
+          <button onClick={addVendor}>Add vendor</button>
+        </div>
+      </header>
+
+      {/* MAIN VIEW */}
+      {state.activeView === "Vendors" && (
         <VendorsView
+          vendors={vendors}
+          selectedVendor={selectedVendor}
+          addVendor={addVendor}
+          updateVendor={updateVendor}
+          addScenario={addScenario}
+          setActiveView={setActiveView}
+        />
+      )}
+
+      {state.activeView === "Tiering" && selectedVendor && (
+        <TieringView
           vendor={selectedVendor}
-          addScenario={() => addScenario(selectedVendor.id)}
           updateVendor={updateVendor}
           setActiveView={setActiveView}
         />
       )}
 
-      {activeView === "Tiering" && (
-        <TieringView
-          vendors={vendors}
-          updateVendor={updateVendor}
-        />
-      )}
+      {state.activeView === "Quantify" &&
+        selectedVendor &&
+        selectedScenario && (
+          <QuantifyView
+            vendor={selectedVendor}
+            scenario={selectedScenario}
+            updateVendor={updateVendor}
+            setActiveView={setActiveView}
+          />
+        )}
 
-      {activeView === "Quantify" && selectedVendor && selectedScenario && (
-        <QuantifyView
-          scenario={selectedScenario}
-          vendorId={selectedVendor.id}
-          updateScenario={updateScenario}
-        />
+      {state.activeView === "Treatments" &&
+        selectedVendor &&
+        selectedScenario && (
+          <TreatmentsView
+            vendor={selectedVendor}
+            scenario={selectedScenario}
+            updateVendor={updateVendor}
+            setActiveView={setActiveView}
+          />
+        )}
+
+      {state.activeView === "Decisions" &&
+        selectedVendor &&
+        selectedScenario && (
+          <DecisionsView
+            vendor={selectedVendor}
+            scenario={selectedScenario}
+            updateVendor={updateVendor}
+            setActiveView={setActiveView}
+          />
+        )}
+
+      {state.activeView === "Dashboard" && (
+        <DashboardView vendors={vendors} />
       )}
     </div>
   );
