@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 export default function VendorsView({
   vendors,
   selectedVendor,
