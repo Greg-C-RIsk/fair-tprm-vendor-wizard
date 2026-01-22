@@ -2,19 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import VendorsView from "./components/VendorsView";
-import TieringView from "./components/TieringView";
-import QuantifyView from "./components/QuantifyView";
-import TreatmentsView from "./components/TreatmentsView";
-import DecisionsView from "./components/DecisionsView";
-import DashboardView from "./components/DashboardView";
-
-const LS_KEY = "fair_tprm_training_v_ui_v1";
-
-const uid = () => Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
-
-const emptyVendor = () => ({
-  id: uid(),
+const emptyDraft = () => ({
   name: "",
   category: "SaaS",
   businessOwner: "",
@@ -22,300 +10,412 @@ const emptyVendor = () => ({
   dataTypes: "",
   geography: "EU",
   dependencyLevel: "Medium",
-
-  tier: "",
-  tierRationale: "",
-  tiering: {
-    dataSensitivity: 1,
-    integrationDepth: 1,
-    accessPrivileges: 1,
-    historicalIncidents: 1,
-    businessCriticality: 1,
-  },
-
-  carryForward: false,
-
-  scenarios: [],
 });
 
-const emptyScenario = () => ({
-  id: uid(),
-  title: "",
-  assetAtRisk: "",
-  threatActor: "External cybercriminal",
-  attackVector: "",
-  lossEvent: "",
-  narrative: "",
+function Field({ label, children, hint }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div className="label">{label}</div>
+      {children}
+      {hint ? <div style={{ fontSize: 12, opacity: 0.75 }}>{hint}</div> : null}
+    </div>
+  );
+}
 
-  // QuantifyView sait "auto-réparer" si quant est vide
-  quant: {},
+export default function VendorsView({
+  vendors,
+  selectedVendorId,
+  onSelectVendor,
+  onAddVendor,
+  onUpdateVendor,
+  onDeleteVendor,
+}) {
+  const list = Array.isArray(vendors) ? vendors : [];
 
-  treatments: [],
-  decision: { status: "", owner: "", approver: "", reviewDate: "", rationale: "" },
-});
+  const selected = useMemo(() => {
+    return list.find((v) => v.id === selectedVendorId) || list[0] || null;
+  }, [list, selectedVendorId]);
 
-export default function Page() {
-  const [activeView, setActiveView] = useState("Vendors");
+  // UI modes
+  const [mode, setMode] = useState("list"); // "list" | "create" | "edit"
+  const [draft, setDraft] = useState(emptyDraft());
 
-  const [state, setState] = useState(() => {
-    // SSR-safe: pas de window au build
-    return {
-      vendors: [emptyVendor()],
-      selectedVendorId: "",
-      selectedScenarioId: "",
-    };
-  });
-
-  // Hydrate depuis localStorage côté client
+  // When switching vendor, return to list
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(LS_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (!parsed || !Array.isArray(parsed.vendors)) return;
+    setMode("list");
+  }, [selectedVendorId]);
 
-      const vendors = parsed.vendors.length ? parsed.vendors : [emptyVendor()];
-      setState({
-        vendors,
-        selectedVendorId: parsed.selectedVendorId || vendors[0]?.id || "",
-        selectedScenarioId: parsed.selectedScenarioId || "",
-      });
-    } catch {
-      // ignore
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Persist
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(LS_KEY, JSON.stringify(state));
-    } catch {
-      // ignore
-    }
-  }, [state]);
-
-  const vendors = state.vendors || [];
-
-  const selectedVendor = useMemo(() => {
-    if (!vendors.length) return null;
-    return vendors.find((v) => v.id === state.selectedVendorId) || vendors[0] || null;
-  }, [vendors, state.selectedVendorId]);
-
-  const selectedScenario = useMemo(() => {
-    if (!selectedVendor) return null;
-    const sc = selectedVendor.scenarios || [];
-    if (!sc.length) return null;
-    return sc.find((s) => s.id === state.selectedScenarioId) || sc[0] || null;
-  }, [selectedVendor, state.selectedScenarioId]);
-
-  // Assure qu'on a toujours une sélection valide
-  useEffect(() => {
-    if (!vendors.length) {
-      const v = emptyVendor();
-      setState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: "" });
-      return;
-    }
-
-    if (!state.selectedVendorId) {
-      setState((p) => ({ ...p, selectedVendorId: vendors[0]?.id || "" }));
-      return;
-    }
-
-    const v = vendors.find((x) => x.id === state.selectedVendorId);
-    if (!v) {
-      setState((p) => ({ ...p, selectedVendorId: vendors[0]?.id || "", selectedScenarioId: "" }));
-      return;
-    }
-
-    const sc = v.scenarios || [];
-    if (sc.length && !state.selectedScenarioId) {
-      setState((p) => ({ ...p, selectedScenarioId: sc[0].id }));
-    }
-
-    if (state.selectedScenarioId && sc.length && !sc.find((s) => s.id === state.selectedScenarioId)) {
-      setState((p) => ({ ...p, selectedScenarioId: sc[0].id }));
-    }
-  }, [vendors, state.selectedVendorId, state.selectedScenarioId]);
-
-  // --- Mutations
-  const setSelectedVendorId = (id) => {
-    setState((p) => ({ ...p, selectedVendorId: id, selectedScenarioId: "" }));
+  const startCreate = () => {
+    setDraft(emptyDraft());
+    setMode("create");
   };
 
-  const setSelectedScenarioId = (id) => {
-    setState((p) => ({ ...p, selectedScenarioId: id }));
-  };
-
-  const updateVendor = (vendorId, patch) => {
-    setState((p) => ({
-      ...p,
-      vendors: (p.vendors || []).map((v) => (v.id === vendorId ? { ...v, ...patch } : v)),
-    }));
-  };
-
-  const addVendor = () => {
-    const v = emptyVendor();
-    setState((p) => ({
-      ...p,
-      vendors: [...(p.vendors || []), v],
-      selectedVendorId: v.id,
-      selectedScenarioId: "",
-    }));
-    setActiveView("Vendors");
-    return v.id;
-  };
-
-  const deleteVendor = (vendorId) => {
-    setState((p) => {
-      const next = (p.vendors || []).filter((v) => v.id !== vendorId);
-      const ensured = next.length ? next : [emptyVendor()];
-      return {
-        ...p,
-        vendors: ensured,
-        selectedVendorId: ensured[0]?.id || "",
-        selectedScenarioId: "",
-      };
+  const startEdit = () => {
+    if (!selected) return;
+    setDraft({
+      name: selected.name || "",
+      category: selected.category || "SaaS",
+      businessOwner: selected.businessOwner || "",
+      criticalFunction: selected.criticalFunction || "",
+      dataTypes: selected.dataTypes || "",
+      geography: selected.geography || "EU",
+      dependencyLevel: selected.dependencyLevel || "Medium",
     });
-    setActiveView("Vendors");
+    setMode("edit");
   };
 
-  const addScenario = (vendorId) => {
-    const s = emptyScenario();
-    setState((p) => ({
-      ...p,
-      vendors: (p.vendors || []).map((v) =>
-        v.id === vendorId ? { ...v, scenarios: [...(v.scenarios || []), s] } : v
-      ),
-      selectedVendorId: vendorId,
-      selectedScenarioId: s.id,
-    }));
-    setActiveView("Quantify");
-    return s.id;
+  const cancel = () => {
+    setMode("list");
+    setDraft(emptyDraft());
   };
 
-  const deleteScenario = (vendorId, scenarioId) => {
-    setState((p) => {
-      const nextVendors = (p.vendors || []).map((v) => {
-        if (v.id !== vendorId) return v;
-        const nextSc = (v.scenarios || []).filter((s) => s.id !== scenarioId);
-        return { ...v, scenarios: nextSc };
-      });
+  const canSubmit = draft.name.trim().length > 0;
 
-      const v2 = nextVendors.find((v) => v.id === vendorId);
-      const nextScenarioId = v2?.scenarios?.[0]?.id || "";
-
-      return { ...p, vendors: nextVendors, selectedScenarioId: nextScenarioId };
+  const submitCreate = () => {
+    if (!canSubmit) return;
+    onAddVendor({
+      ...draft,
+      name: draft.name.trim(),
     });
+    setMode("list");
+    setDraft(emptyDraft());
   };
 
-  const resetAll = () => {
-    try {
-      window.localStorage.removeItem(LS_KEY);
-    } catch {
-      // ignore
-    }
-    const v = emptyVendor();
-    setState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: "" });
-    setActiveView("Vendors");
-  };
+  const submitEdit = () => {
+    if (!selected) return;
+    if (!canSubmit) return;
 
-  // --- Nav
-  const tabs = [
-    { k: "Vendors", label: "Vendors" },
-    { k: "Tiering", label: "Tiering" },
-    { k: "Quantify", label: "Quantify" },
-    { k: "Treatments", label: "Treatments" },
-    { k: "Decisions", label: "Decisions" },
-    { k: "Dashboard", label: "Dashboard" },
-  ];
+    onUpdateVendor(selected.id, {
+      ...draft,
+      name: draft.name.trim(),
+    });
+
+    setMode("list");
+    setDraft(emptyDraft());
+  };
 
   return (
-    <div className="container">
-      <div className="header" style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <div>
-          <h1 className="h-title">FAIR TPRM Training Tool</h1>
-          <p className="h-sub">Training only — data stays in your browser.</p>
+    <div className="grid" style={{ alignItems: "start" }}>
+      {/* LEFT: Vendors list */}
+      <div className="col6">
+        <div className="card card-pad">
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+            <div>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>Vendors</div>
+              <div style={{ opacity: 0.75, marginTop: 4, fontSize: 13 }}>
+                Sélectionne un vendor, ou crée-en un nouveau.
+              </div>
+            </div>
 
-          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <span className="badge">{vendors.length} vendor(s)</span>
-            <span className="badge">{vendors.reduce((n, v) => n + ((v.scenarios || []).length), 0)} scenario(s)</span>
-            <span className="badge">Carry-forward: {vendors.filter((v) => v.carryForward).length}</span>
+            <button className="btn primary" onClick={startCreate} type="button">
+              Add vendor
+            </button>
+          </div>
+
+          <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+            {list.length === 0 ? (
+              <div className="hint">Aucun vendor pour l’instant.</div>
+            ) : (
+              list.map((v) => {
+                const active = v.id === (selected?.id || "");
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => onSelectVendor(v.id)}
+                    className="card"
+                    style={{
+                      padding: 12,
+                      textAlign: "left",
+                      cursor: "pointer",
+                      border: active ? "1px solid rgba(110,231,255,0.40)" : "1px solid rgba(255,255,255,0.10)",
+                      background: active ? "rgba(110,231,255,0.06)" : "rgba(255,255,255,0.03)",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+                      <div style={{ fontWeight: 900 }}>
+                        {v.name?.trim() ? v.name : "(Unnamed vendor)"}
+                      </div>
+                      <div style={{ fontSize: 12, opacity: 0.7 }}>{v.category || "—"}</div>
+                    </div>
+
+                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                      {v.geography || "—"} · Dependency: {v.dependencyLevel || "—"}
+                    </div>
+
+                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
+                      Scenarios: {v.scenarios?.length || 0}
+                    </div>
+                  </button>
+                );
+              })
+            )}
           </div>
         </div>
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="btn" onClick={resetAll}>Reset</button>
-        </div>
       </div>
 
-      <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        <div className="tabs" style={{ flex: 1 }}>
-          {tabs.map((t) => (
-            <button key={t.k} className={`tab ${activeView === t.k ? "active" : ""}`} onClick={() => setActiveView(t.k)}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* RIGHT: Details / Create / Edit */}
+      <div className="col6">
+        {/* Create */}
+        {mode === "create" ? (
+          <div className="card card-pad">
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Create vendor</div>
+                <div style={{ opacity: 0.75, marginTop: 4, fontSize: 13 }}>
+                  Remplis les infos minimales, puis crée le vendor.
+                </div>
+              </div>
 
-      <div style={{ marginTop: 14 }}>
-        {activeView === "Vendors" ? (
-          <VendorsView
-            vendors={vendors}
-            selectedVendorId={selectedVendor?.id || ""}
-            setSelectedVendorId={setSelectedVendorId}
-            updateVendor={updateVendor}
-            addVendor={addVendor}
-            deleteVendor={deleteVendor}
-            addScenario={addScenario}
-            deleteScenario={deleteScenario}
-            setActiveView={setActiveView}
-          />
+              <button className="btn" onClick={cancel} type="button">
+                Cancel
+              </button>
+            </div>
+
+            <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+              <Field label="Vendor name" hint="Requis">
+                <input
+                  className="input"
+                  value={draft.name}
+                  onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                  placeholder="Ex: Salesforce"
+                />
+              </Field>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <Field label="Category">
+                  <select
+                    className="input"
+                    value={draft.category}
+                    onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))}
+                  >
+                    {["SaaS", "Cloud", "MSP", "Payment", "Data processor", "AI provider", "Other"].map((x) => (
+                      <option key={x} value={x}>{x}</option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="Geography">
+                  <select
+                    className="input"
+                    value={draft.geography}
+                    onChange={(e) => setDraft((d) => ({ ...d, geography: e.target.value }))}
+                  >
+                    {["EU", "US", "UK", "Global", "Other"].map((x) => (
+                      <option key={x} value={x}>{x}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+
+              <Field label="Business owner">
+                <input
+                  className="input"
+                  value={draft.businessOwner}
+                  onChange={(e) => setDraft((d) => ({ ...d, businessOwner: e.target.value }))}
+                  placeholder="Ex: Head of Sales Ops"
+                />
+              </Field>
+
+              <Field label="Critical business function supported">
+                <input
+                  className="input"
+                  value={draft.criticalFunction}
+                  onChange={(e) => setDraft((d) => ({ ...d, criticalFunction: e.target.value }))}
+                  placeholder="Ex: Customer acquisition and retention"
+                />
+              </Field>
+
+              <Field label="Data types accessed or processed">
+                <textarea
+                  className="textarea"
+                  value={draft.dataTypes}
+                  onChange={(e) => setDraft((d) => ({ ...d, dataTypes: e.target.value }))}
+                  placeholder="Ex: PII, billing data, support tickets"
+                />
+              </Field>
+
+              <Field label="Dependency level">
+                <select
+                  className="input"
+                  value={draft.dependencyLevel}
+                  onChange={(e) => setDraft((d) => ({ ...d, dependencyLevel: e.target.value }))}
+                >
+                  {["Low", "Medium", "High"].map((x) => (
+                    <option key={x} value={x}>{x}</option>
+                  ))}
+                </select>
+              </Field>
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 6 }}>
+                <button className="btn" onClick={cancel} type="button">
+                  Cancel
+                </button>
+                <button className={`btn primary`} onClick={submitCreate} disabled={!canSubmit} type="button">
+                  Create vendor
+                </button>
+              </div>
+
+              {!canSubmit ? <div className="hint">Le nom du vendor est requis.</div> : null}
+            </div>
+          </div>
         ) : null}
 
-        {activeView === "Tiering" ? (
-          <TieringView
-            vendors={vendors}
-            selectedVendorId={selectedVendor?.id || ""}
-            setSelectedVendorId={setSelectedVendorId}
-            updateVendor={updateVendor}
-            setActiveView={setActiveView}
-          />
+        {/* Edit */}
+        {mode === "edit" && selected ? (
+          <div className="card card-pad">
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Edit vendor</div>
+                <div style={{ opacity: 0.75, marginTop: 4, fontSize: 13 }}>
+                  Modifie puis sauvegarde.
+                </div>
+              </div>
+
+              <button className="btn" onClick={cancel} type="button">
+                Cancel
+              </button>
+            </div>
+
+            <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+              <Field label="Vendor name" hint="Requis">
+                <input
+                  className="input"
+                  value={draft.name}
+                  onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                />
+              </Field>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <Field label="Category">
+                  <select
+                    className="input"
+                    value={draft.category}
+                    onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))}
+                  >
+                    {["SaaS", "Cloud", "MSP", "Payment", "Data processor", "AI provider", "Other"].map((x) => (
+                      <option key={x} value={x}>{x}</option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="Geography">
+                  <select
+                    className="input"
+                    value={draft.geography}
+                    onChange={(e) => setDraft((d) => ({ ...d, geography: e.target.value }))}
+                  >
+                    {["EU", "US", "UK", "Global", "Other"].map((x) => (
+                      <option key={x} value={x}>{x}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+
+              <Field label="Business owner">
+                <input
+                  className="input"
+                  value={draft.businessOwner}
+                  onChange={(e) => setDraft((d) => ({ ...d, businessOwner: e.target.value }))}
+                />
+              </Field>
+
+              <Field label="Critical business function supported">
+                <input
+                  className="input"
+                  value={draft.criticalFunction}
+                  onChange={(e) => setDraft((d) => ({ ...d, criticalFunction: e.target.value }))}
+                />
+              </Field>
+
+              <Field label="Data types accessed or processed">
+                <textarea
+                  className="textarea"
+                  value={draft.dataTypes}
+                  onChange={(e) => setDraft((d) => ({ ...d, dataTypes: e.target.value }))}
+                />
+              </Field>
+
+              <Field label="Dependency level">
+                <select
+                  className="input"
+                  value={draft.dependencyLevel}
+                  onChange={(e) => setDraft((d) => ({ ...d, dependencyLevel: e.target.value }))}
+                >
+                  {["Low", "Medium", "High"].map((x) => (
+                    <option key={x} value={x}>{x}</option>
+                  ))}
+                </select>
+              </Field>
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 6 }}>
+                <button className="btn" onClick={cancel} type="button">
+                  Cancel
+                </button>
+                <button className="btn primary" onClick={submitEdit} disabled={!canSubmit} type="button">
+                  Save changes
+                </button>
+              </div>
+
+              {!canSubmit ? <div className="hint">Le nom du vendor est requis.</div> : null}
+            </div>
+          </div>
         ) : null}
 
-        {activeView === "Quantify" ? (
-          <QuantifyView
-            vendor={selectedVendor}
-            scenario={selectedScenario}
-            updateVendor={updateVendor}
-            setActiveView={setActiveView}
-          />
-        ) : null}
+        {/* Details (default) */}
+        {mode === "list" ? (
+          <div className="card card-pad">
+            {!selected ? (
+              <div className="hint">Sélectionne un vendor dans la liste ou clique “Add vendor”.</div>
+            ) : (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontWeight: 900, fontSize: 18 }}>
+                      {selected.name?.trim() ? selected.name : "(Unnamed vendor)"}
+                    </div>
+                    <div style={{ opacity: 0.75, marginTop: 6 }}>
+                      {selected.category || "—"} · {selected.geography || "—"} · Dependency:{" "}
+                      {selected.dependencyLevel || "—"}
+                    </div>
+                  </div>
 
-        {activeView === "Treatments" ? (
-          <TreatmentsView
-            vendor={selectedVendor}
-            scenario={selectedScenario}
-            updateVendor={updateVendor}
-            setActiveView={setActiveView}
-          />
-        ) : null}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button className="btn" onClick={startEdit} type="button">
+                      Edit
+                    </button>
+                    <button className="btn" onClick={() => onDeleteVendor(selected.id)} type="button">
+                      Delete
+                    </button>
+                  </div>
+                </div>
 
-        {activeView === "Decisions" ? (
-          <DecisionsView
-            vendor={selectedVendor}
-            scenario={selectedScenario}
-            updateVendor={updateVendor}
-            setActiveView={setActiveView}
-          />
-        ) : null}
+                <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+                  <div className="hint">
+                    <div style={{ fontWeight: 800 }}>Business owner</div>
+                    <div style={{ marginTop: 4 }}>{selected.businessOwner?.trim() ? selected.businessOwner : "—"}</div>
+                  </div>
 
-        {activeView === "Dashboard" ? (
-          <DashboardView
-            vendors={vendors}
-            setActiveView={setActiveView}
-          />
+                  <div className="hint">
+                    <div style={{ fontWeight: 800 }}>Critical business function</div>
+                    <div style={{ marginTop: 4 }}>{selected.criticalFunction?.trim() ? selected.criticalFunction : "—"}</div>
+                  </div>
+
+                  <div className="hint">
+                    <div style={{ fontWeight: 800 }}>Data types</div>
+                    <div style={{ marginTop: 4, whiteSpace: "pre-wrap" }}>
+                      {selected.dataTypes?.trim() ? selected.dataTypes : "—"}
+                    </div>
+                  </div>
+
+                  <div className="hint">
+                    <div style={{ fontWeight: 800 }}>Scenarios</div>
+                    <div style={{ marginTop: 4 }}>{selected.scenarios?.length || 0} scenario(s)</div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         ) : null}
       </div>
     </div>
