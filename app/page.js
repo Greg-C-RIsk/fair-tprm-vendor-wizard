@@ -11,61 +11,22 @@ import TreatmentsView from "./components/TreatmentsView";
 import DecisionsView from "./components/DecisionsView";
 import DashboardView from "./components/DashboardView";
 
-import { emptyVendor, emptyScenario, normalizeState, safeParse } from "../lib/model";
+import { emptyVendor, normalizeState, safeParse } from "../lib/model";
+
+const LS_KEY = "fair_tprm_training_v7_shell";
 
 /**
- * app/page.js — Shell stable (Next export safe)
- * - No circular deps
- * - No hook initializers referencing vars declared later (fixes "Cannot access 'i' before initialization")
- * - Centralized state + persistence
- * - Tabs + global vendor/scenario pickers
+ * page.js (Shell stable)
+ * - Persists state in localStorage
+ * - Keeps selectedVendorId / selectedScenarioId always valid via normalizeState()
+ * - Renders tab components from /app/components/*
  */
-
-const LS_KEY = "fair_tprm_training_v7";
-
-function Pill({ children }) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "4px 10px",
-        borderRadius: 999,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(255,255,255,0.06)",
-        fontSize: 12,
-        opacity: 0.95,
-        gap: 6,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-function Card({ children, style }) {
-  return (
-    <div
-      style={{
-        border: "1px solid rgba(255,255,255,0.12)",
-        background: "rgba(0,0,0,0.18)",
-        borderRadius: 16,
-        padding: 16,
-        backdropFilter: "blur(8px)",
-        ...style,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
 
 export default function Page() {
   const [activeView, setActiveView] = useState("Vendors");
 
-  // ---- persisted app state (SSR-safe initializer)
   const [state, setState] = useState(() => {
+    // IMPORTANT: avoid SSR/prerender crashes
     if (typeof window === "undefined") {
       return normalizeState({ vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" });
     }
@@ -76,12 +37,11 @@ export default function Page() {
     return normalizeState(base);
   });
 
-  // Persist normalized state
+  // Persist (always normalized so we never keep a "bad shape" forever)
   useEffect(() => {
+    if (typeof window === "undefined") return;
     try {
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(LS_KEY, JSON.stringify(normalizeState(state)));
-      }
+      window.localStorage.setItem(LS_KEY, JSON.stringify(normalizeState(state)));
     } catch {
       // ignore
     }
@@ -96,70 +56,88 @@ export default function Page() {
 
   const selectedScenario = useMemo(() => {
     if (!selectedVendor) return null;
-    const scenarios = Array.isArray(selectedVendor.scenarios) ? selectedVendor.scenarios : [];
-    return scenarios.find((s) => s.id === state.selectedScenarioId) || scenarios[0] || null;
+    const list = Array.isArray(selectedVendor.scenarios) ? selectedVendor.scenarios : [];
+    return list.find((s) => s.id === state.selectedScenarioId) || list[0] || null;
   }, [selectedVendor, state.selectedScenarioId]);
 
-  // ---- helpers
-  const setSelectedVendorId = (vendorId) => {
-    setState((p) => {
-      const next = normalizeState({ ...p, selectedVendorId: vendorId });
-      // force scenario selection to first scenario of selected vendor
-      const v = next.vendors.find((x) => x.id === next.selectedVendorId) || next.vendors[0] || null;
-      const firstScenarioId = v?.scenarios?.[0]?.id || "";
-      return normalizeState({ ...next, selectedScenarioId: firstScenarioId });
-    });
-  };
+  // ---- Actions (all safe + normalized)
 
-  const setSelectedScenarioId = (scenarioId) => {
-    setState((p) => normalizeState({ ...p, selectedScenarioId: scenarioId }));
-  };
-
-  const addVendor = () => {
-    setState((p) => {
-      const v = emptyVendor();
-      const next = normalizeState({
-        ...p,
-        vendors: [...(Array.isArray(p.vendors) ? p.vendors : []), v],
-        selectedVendorId: v.id,
-        selectedScenarioId: v.scenarios?.[0]?.id || "",
-      });
-      return next;
-    });
+  const resetAll = () => {
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.removeItem(LS_KEY);
+      } catch {
+        // ignore
+      }
+    }
+    const v = emptyVendor();
+    setState(normalizeState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" }));
     setActiveView("Vendors");
   };
 
-  const updateVendor = (vendorId, patch) => {
+  const selectVendor = (vendorId) => {
     setState((p) => {
-      const nextVendors = (Array.isArray(p.vendors) ? p.vendors : []).map((v) =>
-        v.id === vendorId ? { ...v, ...patch } : v
-      );
-      return normalizeState({ ...p, vendors: nextVendors });
+      const next = normalizeState(p);
+      const v = (next.vendors || []).find((x) => x.id === vendorId) || next.vendors?.[0] || null;
+      return normalizeState({
+        ...next,
+        selectedVendorId: vendorId,
+        selectedScenarioId: v?.scenarios?.[0]?.id || "",
+      });
+    });
+  };
+
+  const selectScenario = (scenarioId) => {
+    setState((p) => normalizeState({ ...p, selectedScenarioId: scenarioId }));
+  };
+
+  const addVendor = (vendorObj) => {
+    setState((p) => {
+      const next = normalizeState(p);
+      const incoming = vendorObj && typeof vendorObj === "object" ? vendorObj : emptyVendor();
+      const vendorsNext = [...(Array.isArray(next.vendors) ? next.vendors : []), incoming];
+
+      const normalized = normalizeState({
+        ...next,
+        vendors: vendorsNext,
+        selectedVendorId: incoming.id || next.selectedVendorId,
+        selectedScenarioId: incoming?.scenarios?.[0]?.id || next.selectedScenarioId,
+      });
+
+      // if incoming had no id, normalizeState will generate one; select last vendor
+      const last = normalized.vendors?.[normalized.vendors.length - 1] || null;
+      return normalizeState({
+        ...normalized,
+        selectedVendorId: last?.id || normalized.selectedVendorId,
+        selectedScenarioId: last?.scenarios?.[0]?.id || normalized.selectedScenarioId,
+      });
     });
   };
 
   const deleteVendor = (vendorId) => {
     setState((p) => {
-      const remaining = (Array.isArray(p.vendors) ? p.vendors : []).filter((v) => v.id !== vendorId);
-      const fallback = remaining.length ? remaining : [emptyVendor()];
-      const selVendor = fallback[0];
-      return normalizeState({
-        ...p,
-        vendors: fallback,
-        selectedVendorId: selVendor?.id || "",
-        selectedScenarioId: selVendor?.scenarios?.[0]?.id || "",
-      });
+      const next = normalizeState(p);
+      const remaining = (Array.isArray(next.vendors) ? next.vendors : []).filter((v) => v.id !== vendorId);
+      return normalizeState({ ...next, vendors: remaining, selectedVendorId: "", selectedScenarioId: "" });
     });
-    setActiveView("Vendors");
   };
 
-  const ensureVendorScenario = () => {
-    if (!selectedVendor) return { v: null, s: null };
-    const scenarios = Array.isArray(selectedVendor.scenarios) ? selectedVendor.scenarios : [];
-    const s = selectedScenario || scenarios[0] || null;
-    return { v: selectedVendor, s };
+  const updateVendor = (vendorId, patch) => {
+    setState((p) => {
+      const next = normalizeState(p);
+      const vendorsNext = (Array.isArray(next.vendors) ? next.vendors : []).map((v) =>
+        v.id === vendorId ? { ...v, ...(patch || {}) } : v
+      );
+      return normalizeState({ ...next, vendors: vendorsNext });
+    });
   };
 
+  // ---- Header stats
+  const totalScenarios = useMemo(() => {
+    return vendors.reduce((n, v) => n + (Array.isArray(v.scenarios) ? v.scenarios.length : 0), 0);
+  }, [vendors]);
+
+  // ---- Tabs
   const tabs = [
     { k: "Vendors", label: "Vendors" },
     { k: "Scenarios", label: "Scenarios" },
@@ -171,86 +149,30 @@ export default function Page() {
     { k: "Dashboard", label: "Dashboard" },
   ];
 
-  const totalScenarios = vendors.reduce(
-    (n, v) => n + (Array.isArray(v.scenarios) ? v.scenarios.length : 0),
-    0
-  );
-
-  const showScenarioPicker = activeView !== "Vendors" && !!selectedVendor;
-
-  const { v, s } = ensureVendorScenario();
-
   return (
     <div className="container" style={{ padding: 22, maxWidth: 1200, margin: "0 auto" }}>
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-          alignItems: "flex-start",
-        }}
-      >
+      {/* Title */}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div>
-          <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.02em" }}>
-            FAIR TPRM Training Tool
-          </div>
+          <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.02em" }}>FAIR TPRM Training Tool</div>
           <div style={{ marginTop: 6, opacity: 0.8 }}>Training only — data stays in your browser.</div>
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Pill>{vendors.length} vendor(s)</Pill>
-            <Pill>{totalScenarios} scenario(s)</Pill>
-            <Pill>Selected: {selectedVendor?.name?.trim() ? selectedVendor.name : "(Unnamed vendor)"}</Pill>
-            {showScenarioPicker ? (
-              <Pill>
-                Scenario:{" "}
-                {s?.title?.trim() ? s.title : "(Untitled)"}
-              </Pill>
-            ) : null}
+            <span className="pill">{vendors.length} vendor(s)</span>
+            <span className="pill">{totalScenarios} scenario(s)</span>
+            <span className="pill">Selected: {selectedVendor?.name?.trim() ? selectedVendor.name : "(none)"}</span>
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <button
-            className="btn"
-            onClick={() => {
-              try {
-                if (typeof window !== "undefined") window.localStorage.removeItem(LS_KEY);
-              } catch {}
-              const vv = emptyVendor();
-              setState(
-                normalizeState({
-                  vendors: [vv],
-                  selectedVendorId: vv.id,
-                  selectedScenarioId: vv.scenarios?.[0]?.id || "",
-                })
-              );
-              setActiveView("Vendors");
-            }}
-          >
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn" onClick={resetAll}>
             Reset
           </button>
-
-          {showScenarioPicker ? (
-            <select
-              className="input"
-              style={{ maxWidth: 360 }}
-              value={s?.id || ""}
-              onChange={(e) => setSelectedScenarioId(e.target.value)}
-            >
-              {(selectedVendor?.scenarios || []).map((sc) => (
-                <option key={sc.id} value={sc.id}>
-                  {sc.title?.trim() ? sc.title : "(Untitled scenario)"}
-                </option>
-              ))}
-            </select>
-          ) : null}
         </div>
       </div>
 
       {/* Tabs */}
       <div style={{ marginTop: 14 }}>
-        <Card style={{ padding: 10 }}>
+        <div className="card" style={{ padding: 10 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {tabs.map((t) => (
               <button
@@ -272,7 +194,7 @@ export default function Page() {
               </button>
             ))}
           </div>
-        </Card>
+        </div>
       </div>
 
       {/* Main */}
@@ -281,51 +203,33 @@ export default function Page() {
           <VendorsView
             vendors={vendors}
             selectedVendor={selectedVendor}
-            onSelectVendor={setSelectedVendorId}
+            onSelectVendor={selectVendor}
             onAddVendor={addVendor}
-            onUpdateVendor={(vendorId, patch) => updateVendor(vendorId, patch)}
+            onUpdateVendor={updateVendor}
             onDeleteVendor={deleteVendor}
           />
         ) : activeView === "Scenarios" ? (
-          v ? (
-            <ScenariosView vendor={v} updateVendor={updateVendor} setActiveView={setActiveView} />
-          ) : (
-            <Card>No vendor selected.</Card>
-          )
+          <ScenariosView
+            vendor={selectedVendor}
+            scenario={selectedScenario}
+            onSelectScenario={selectScenario}
+            onUpdateVendor={updateVendor}
+            setActiveView={setActiveView}
+          />
         ) : activeView === "Tiering" ? (
-          v ? (
-            <TieringView vendor={v} />
-          ) : (
-            <Card>No vendor selected.</Card>
-          )
+          <TieringView vendor={selectedVendor} onUpdateVendor={updateVendor} setActiveView={setActiveView} />
         ) : activeView === "Quantify" ? (
-          v && s ? (
-            <QuantifyView vendor={v} scenario={s} />
-          ) : (
-            <Card>Select a vendor and scenario first.</Card>
-          )
+          <QuantifyView vendor={selectedVendor} scenario={selectedScenario} onUpdateVendor={updateVendor} setActiveView={setActiveView} />
         ) : activeView === "Results" ? (
-          v && s ? (
-            <ResultsView vendor={v} scenario={s} updateVendor={updateVendor} setActiveView={setActiveView} />
-          ) : (
-            <Card>Select a vendor and scenario first.</Card>
-          )
+          <ResultsView vendor={selectedVendor} scenario={selectedScenario} setActiveView={setActiveView} />
         ) : activeView === "Treatments" ? (
-          v && s ? (
-            <TreatmentsView vendor={v} scenario={s} updateVendor={updateVendor} setActiveView={setActiveView} />
-          ) : (
-            <Card>Select a vendor and scenario first.</Card>
-          )
+          <TreatmentsView vendor={selectedVendor} scenario={selectedScenario} onUpdateVendor={updateVendor} setActiveView={setActiveView} />
         ) : activeView === "Decisions" ? (
-          v && s ? (
-            <DecisionsView vendor={v} scenario={s} updateVendor={updateVendor} setActiveView={setActiveView} />
-          ) : (
-            <Card>Select a vendor and scenario first.</Card>
-          )
+          <DecisionsView vendor={selectedVendor} scenario={selectedScenario} onUpdateVendor={updateVendor} setActiveView={setActiveView} />
         ) : activeView === "Dashboard" ? (
-          <DashboardView vendors={vendors} />
+          <DashboardView vendors={vendors} setActiveView={setActiveView} />
         ) : (
-          <Card>Unknown view.</Card>
+          <div className="card">Unknown view.</div>
         )}
       </div>
     </div>
