@@ -13,131 +13,26 @@ import DashboardView from "./components/DashboardView";
 
 import { emptyVendor, normalizeState, safeParse } from "../lib/model";
 
-const LS_KEY = "fair_tprm_training_v7_shell";
+const LS_KEY = "fair_tprm_training_v7";
 
-/**
- * page.js (Shell stable)
- * - Persists state in localStorage
- * - Keeps selectedVendorId / selectedScenarioId always valid via normalizeState()
- * - Renders tab components from /app/components/*
- */
+function Card({ children }) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(255,255,255,0.12)",
+        background: "rgba(0,0,0,0.18)",
+        borderRadius: 16,
+        padding: 16,
+        backdropFilter: "blur(8px)",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
 export default function Page() {
-  const [activeView, setActiveView] = useState("Vendors");
-
-  const [state, setState] = useState(() => {
-    // IMPORTANT: avoid SSR/prerender crashes
-    if (typeof window === "undefined") {
-      return normalizeState({ vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" });
-    }
-    const raw = window.localStorage.getItem(LS_KEY);
-    const base = raw
-      ? safeParse(raw, { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" })
-      : { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" };
-    return normalizeState(base);
-  });
-
-  // Persist (always normalized so we never keep a "bad shape" forever)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(LS_KEY, JSON.stringify(normalizeState(state)));
-    } catch {
-      // ignore
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state]);
-
-  const vendors = Array.isArray(state.vendors) ? state.vendors : [];
-
-  const selectedVendor = useMemo(() => {
-    return vendors.find((v) => v.id === state.selectedVendorId) || vendors[0] || null;
-  }, [vendors, state.selectedVendorId]);
-
-  const selectedScenario = useMemo(() => {
-    if (!selectedVendor) return null;
-    const list = Array.isArray(selectedVendor.scenarios) ? selectedVendor.scenarios : [];
-    return list.find((s) => s.id === state.selectedScenarioId) || list[0] || null;
-  }, [selectedVendor, state.selectedScenarioId]);
-
-  // ---- Actions (all safe + normalized)
-
-  const resetAll = () => {
-    if (typeof window !== "undefined") {
-      try {
-        window.localStorage.removeItem(LS_KEY);
-      } catch {
-        // ignore
-      }
-    }
-    const v = emptyVendor();
-    setState(normalizeState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" }));
-    setActiveView("Vendors");
-  };
-
-  const selectVendor = (vendorId) => {
-    setState((p) => {
-      const next = normalizeState(p);
-      const v = (next.vendors || []).find((x) => x.id === vendorId) || next.vendors?.[0] || null;
-      return normalizeState({
-        ...next,
-        selectedVendorId: vendorId,
-        selectedScenarioId: v?.scenarios?.[0]?.id || "",
-      });
-    });
-  };
-
-  const selectScenario = (scenarioId) => {
-    setState((p) => normalizeState({ ...p, selectedScenarioId: scenarioId }));
-  };
-
-  const addVendor = (vendorObj) => {
-    setState((p) => {
-      const next = normalizeState(p);
-      const incoming = vendorObj && typeof vendorObj === "object" ? vendorObj : emptyVendor();
-      const vendorsNext = [...(Array.isArray(next.vendors) ? next.vendors : []), incoming];
-
-      const normalized = normalizeState({
-        ...next,
-        vendors: vendorsNext,
-        selectedVendorId: incoming.id || next.selectedVendorId,
-        selectedScenarioId: incoming?.scenarios?.[0]?.id || next.selectedScenarioId,
-      });
-
-      // if incoming had no id, normalizeState will generate one; select last vendor
-      const last = normalized.vendors?.[normalized.vendors.length - 1] || null;
-      return normalizeState({
-        ...normalized,
-        selectedVendorId: last?.id || normalized.selectedVendorId,
-        selectedScenarioId: last?.scenarios?.[0]?.id || normalized.selectedScenarioId,
-      });
-    });
-  };
-
-  const deleteVendor = (vendorId) => {
-    setState((p) => {
-      const next = normalizeState(p);
-      const remaining = (Array.isArray(next.vendors) ? next.vendors : []).filter((v) => v.id !== vendorId);
-      return normalizeState({ ...next, vendors: remaining, selectedVendorId: "", selectedScenarioId: "" });
-    });
-  };
-
-  const updateVendor = (vendorId, patch) => {
-    setState((p) => {
-      const next = normalizeState(p);
-      const vendorsNext = (Array.isArray(next.vendors) ? next.vendors : []).map((v) =>
-        v.id === vendorId ? { ...v, ...(patch || {}) } : v
-      );
-      return normalizeState({ ...next, vendors: vendorsNext });
-    });
-  };
-
-  // ---- Header stats
-  const totalScenarios = useMemo(() => {
-    return vendors.reduce((n, v) => n + (Array.isArray(v.scenarios) ? v.scenarios.length : 0), 0);
-  }, [vendors]);
-
-  // ---- Tabs
+  // Tabs: définis AVANT le return (évite tout problème TDZ en minification)
   const tabs = [
     { k: "Vendors", label: "Vendors" },
     { k: "Scenarios", label: "Scenarios" },
@@ -149,6 +44,119 @@ export default function Page() {
     { k: "Dashboard", label: "Dashboard" },
   ];
 
+  const [activeView, setActiveView] = useState("Vendors");
+
+  // State persistant (safe SSR)
+  const [state, setState] = useState(() => {
+    if (typeof window === "undefined") {
+      return normalizeState({ vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" });
+    }
+    const raw = window.localStorage.getItem(LS_KEY);
+    const base = raw
+      ? safeParse(raw, { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" })
+      : { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" };
+
+    return normalizeState(base);
+  });
+
+  // Persist
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(LS_KEY, JSON.stringify(normalizeState(state)));
+      }
+    } catch {
+      // ignore
+    }
+  }, [state]);
+
+  const vendors = Array.isArray(state.vendors) ? state.vendors : [];
+
+  const selectedVendor = useMemo(() => {
+    return vendors.find((v) => v.id === state.selectedVendorId) || vendors[0] || null;
+  }, [vendors, state.selectedVendorId]);
+
+  const selectedScenario = useMemo(() => {
+    if (!selectedVendor) return null;
+    const scenarios = Array.isArray(selectedVendor.scenarios) ? selectedVendor.scenarios : [];
+    return scenarios.find((s) => s.id === state.selectedScenarioId) || scenarios[0] || null;
+  }, [selectedVendor, state.selectedScenarioId]);
+
+  // Keep selection valid (si vendor supprimé, scenario manquant, etc.)
+  useEffect(() => {
+    const next = normalizeState(state);
+    if (
+      next.selectedVendorId !== state.selectedVendorId ||
+      next.selectedScenarioId !== state.selectedScenarioId ||
+      next.vendors.length !== vendors.length
+    ) {
+      setState(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendors.length]);
+
+  // ---- Mutations “source of truth” ----
+  const selectVendor = (vendorId) => {
+    const v = vendors.find((x) => x.id === vendorId) || null;
+    setState((p) =>
+      normalizeState({
+        ...p,
+        selectedVendorId: vendorId,
+        selectedScenarioId: v?.scenarios?.[0]?.id || "",
+      })
+    );
+  };
+
+  const selectScenario = (scenarioId) => {
+    setState((p) =>
+      normalizeState({
+        ...p,
+        selectedScenarioId: scenarioId,
+      })
+    );
+  };
+
+  const updateVendor = (vendorId, patch) => {
+    setState((p) =>
+      normalizeState({
+        ...p,
+        vendors: (Array.isArray(p.vendors) ? p.vendors : []).map((v) => (v.id === vendorId ? { ...v, ...patch } : v)),
+      })
+    );
+  };
+
+  const addVendor = () => {
+    const v = emptyVendor();
+    setState((p) =>
+      normalizeState({
+        ...p,
+        vendors: [...(Array.isArray(p.vendors) ? p.vendors : []), v],
+        selectedVendorId: v.id,
+        selectedScenarioId: v.scenarios?.[0]?.id || "",
+      })
+    );
+    setActiveView("Vendors");
+  };
+
+  const deleteVendor = (vendorId) => {
+    setState((p) => normalizeState({ ...p, vendors: (p.vendors || []).filter((v) => v.id !== vendorId) }));
+    setActiveView("Vendors");
+  };
+
+  const resetAll = () => {
+    try {
+      if (typeof window !== "undefined") window.localStorage.removeItem(LS_KEY);
+    } catch {}
+    const v = emptyVendor();
+    setState(normalizeState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" }));
+    setActiveView("Vendors");
+  };
+
+  // ---- Header stats ----
+  const scenarioCount = useMemo(() => {
+    return vendors.reduce((n, v) => n + (Array.isArray(v.scenarios) ? v.scenarios.length : 0), 0);
+  }, [vendors]);
+
   return (
     <div className="container" style={{ padding: 22, maxWidth: 1200, margin: "0 auto" }}>
       {/* Title */}
@@ -158,12 +166,15 @@ export default function Page() {
           <div style={{ marginTop: 6, opacity: 0.8 }}>Training only — data stays in your browser.</div>
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
             <span className="pill">{vendors.length} vendor(s)</span>
-            <span className="pill">{totalScenarios} scenario(s)</span>
-            <span className="pill">Selected: {selectedVendor?.name?.trim() ? selectedVendor.name : "(none)"}</span>
+            <span className="pill">{scenarioCount} scenario(s)</span>
+            {selectedVendor ? <span className="pill">Selected: {selectedVendor.name?.trim() ? selectedVendor.name : "(Unnamed)"}</span> : null}
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn" onClick={addVendor}>
+            + Add vendor
+          </button>
           <button className="btn" onClick={resetAll}>
             Reset
           </button>
@@ -172,7 +183,7 @@ export default function Page() {
 
       {/* Tabs */}
       <div style={{ marginTop: 14 }}>
-        <div className="card" style={{ padding: 10 }}>
+        <Card>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {tabs.map((t) => (
               <button
@@ -194,7 +205,7 @@ export default function Page() {
               </button>
             ))}
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Main */}
@@ -202,34 +213,53 @@ export default function Page() {
         {activeView === "Vendors" ? (
           <VendorsView
             vendors={vendors}
-            selectedVendor={selectedVendor}
+            selectedVendorId={selectedVendor?.id || ""}
             onSelectVendor={selectVendor}
-            onAddVendor={addVendor}
+            onCreateVendor={addVendor}
             onUpdateVendor={updateVendor}
             onDeleteVendor={deleteVendor}
+            onGoTiering={() => setActiveView("Tiering")}
           />
         ) : activeView === "Scenarios" ? (
-          <ScenariosView
-            vendor={selectedVendor}
-            scenario={selectedScenario}
-            onSelectScenario={selectScenario}
-            onUpdateVendor={updateVendor}
-            setActiveView={setActiveView}
-          />
+          selectedVendor ? (
+            <ScenariosView vendor={selectedVendor} updateVendor={updateVendor} setActiveView={setActiveView} />
+          ) : (
+            <Card>No vendor selected. Go to Vendors.</Card>
+          )
         ) : activeView === "Tiering" ? (
-          <TieringView vendor={selectedVendor} onUpdateVendor={updateVendor} setActiveView={setActiveView} />
+          selectedVendor ? (
+            <TieringView vendor={selectedVendor} updateVendor={updateVendor} setActiveView={setActiveView} />
+          ) : (
+            <Card>No vendor selected. Go to Vendors.</Card>
+          )
         ) : activeView === "Quantify" ? (
-          <QuantifyView vendor={selectedVendor} scenario={selectedScenario} onUpdateVendor={updateVendor} setActiveView={setActiveView} />
+          selectedVendor && selectedScenario ? (
+            <QuantifyView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} setActiveView={setActiveView} />
+          ) : (
+            <Card>No scenario selected. Go to Scenarios.</Card>
+          )
         ) : activeView === "Results" ? (
-          <ResultsView vendor={selectedVendor} scenario={selectedScenario} setActiveView={setActiveView} />
+          selectedVendor && selectedScenario ? (
+            <ResultsView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} setActiveView={setActiveView} />
+          ) : (
+            <Card>No scenario selected. Go to Scenarios.</Card>
+          )
         ) : activeView === "Treatments" ? (
-          <TreatmentsView vendor={selectedVendor} scenario={selectedScenario} onUpdateVendor={updateVendor} setActiveView={setActiveView} />
+          selectedVendor && selectedScenario ? (
+            <TreatmentsView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} setActiveView={setActiveView} />
+          ) : (
+            <Card>No scenario selected. Go to Scenarios.</Card>
+          )
         ) : activeView === "Decisions" ? (
-          <DecisionsView vendor={selectedVendor} scenario={selectedScenario} onUpdateVendor={updateVendor} setActiveView={setActiveView} />
+          selectedVendor && selectedScenario ? (
+            <DecisionsView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} setActiveView={setActiveView} />
+          ) : (
+            <Card>No scenario selected. Go to Scenarios.</Card>
+          )
         ) : activeView === "Dashboard" ? (
           <DashboardView vendors={vendors} setActiveView={setActiveView} />
         ) : (
-          <div className="card">Unknown view.</div>
+          <Card>Unknown view.</Card>
         )}
       </div>
     </div>
