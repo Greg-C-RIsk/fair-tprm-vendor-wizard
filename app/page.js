@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 
-// Views (components folder)
-import TieringView from "./components/TieringView";
-import ScenariosView from "./components/ScenariosView";
-import QuantifyView from "./components/QuantifyView";
-import ResultsView from "./components/ResultsView";
-import TreatmentsView from "./components/TreatmentsView";
-import DecisionsView from "./components/DecisionsView";
-import DashboardView from "./components/DashboardView";
+// ✅ Views chargées à la demande (évite crash au chargement si un onglet a du code top-level)
+const TieringView = dynamic(() => import("./components/TieringView"), { ssr: false });
+const ScenariosView = dynamic(() => import("./components/ScenariosView"), { ssr: false });
+const QuantifyView = dynamic(() => import("./components/QuantifyView"), { ssr: false });
+const ResultsView = dynamic(() => import("./components/ResultsView"), { ssr: false });
+const TreatmentsView = dynamic(() => import("./components/TreatmentsView"), { ssr: false });
+const DecisionsView = dynamic(() => import("./components/DecisionsView"), { ssr: false });
+const DashboardView = dynamic(() => import("./components/DashboardView"), { ssr: false });
 
 // Shared model (root /lib)
 import {
@@ -24,7 +25,7 @@ import {
 
 /**
  * page.js (Shell stable + Mode A Vendors UX + plug-in tabs)
- * - SSR-safe: avoids rendering the full UI during prerender/export
+ * - SSR-safe: no random IDs generated during server prerender
  * - localStorage persistence (client only)
  * - Vendors UX: list + details + create/edit form panel
  * - Other tabs: uses ./components/* views
@@ -316,6 +317,7 @@ function VendorsView({
                     <div style={{ fontSize: 12, opacity: 0.8 }}>{v.category}</div>
                   </div>
                   <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {/* ✅ FIX: tiering (pas "tiering") */}
                     <Pill>Index: {tierIndex(v.tiering || emptyTiering())}</Pill>
                     <Pill>{scenarioCount} scenario(s)</Pill>
                     <Pill>{v.carryForward ? "Carry-forward" : "Not carried"}</Pill>
@@ -396,6 +398,7 @@ function VendorsView({
               <Card style={{ padding: 12 }}>
                 <div style={{ fontWeight: 900, marginBottom: 6 }}>Prioritization</div>
                 <div style={{ display: "grid", gap: 6 }}>
+                  {/* ✅ FIX: tiering */}
                   <div style={{ fontSize: 13, opacity: 0.9 }}>
                     Index: {tierIndex(selected.tiering || emptyTiering())}
                   </div>
@@ -418,10 +421,6 @@ function VendorsView({
 
 export default function Page() {
   const [activeView, setActiveView] = useState("Vendors");
-
-  // ✅ Fix: render nothing “complex” until mounted (prevents export/prerender crash)
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
 
   // SSR-safe init: don’t generate random IDs on server
   const [state, setState] = useState(() => ({
@@ -447,13 +446,7 @@ export default function Page() {
       setState(normalized);
     } catch {
       const v = emptyVendor();
-      setState(
-        normalizeState({
-          vendors: [v],
-          selectedVendorId: v.id,
-          selectedScenarioId: v.scenarios?.[0]?.id || "",
-        })
-      );
+      setState(normalizeState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -584,13 +577,7 @@ export default function Page() {
   const resetAll = () => {
     if (typeof window !== "undefined") window.localStorage.removeItem(LS_KEY);
     const v = emptyVendor();
-    setState(
-      normalizeState({
-        vendors: [v],
-        selectedVendorId: v.id,
-        selectedScenarioId: v.scenarios?.[0]?.id || "",
-      })
-    );
+    setState(normalizeState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" }));
     setActiveView("Vendors");
     closeVendorForm();
   };
@@ -614,23 +601,8 @@ export default function Page() {
 
   const showContextBar = !vendorForm.open && activeView !== "Vendors";
 
-  // ✅ Fix: during prerender/export we show a simple shell only (no complex maps)
-  if (!mounted) {
-    return (
-      <div className="container" style={{ padding: 22, maxWidth: 1200, margin: "0 auto" }}>
-        <Card>
-          <div style={{ fontSize: 16, fontWeight: 900 }}>Loading…</div>
-          <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
-            Initializing app state…
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div className="container" style={{ padding: 22, maxWidth: 1200, margin: "0 auto" }}>
-      {/* Title */}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div>
           <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.02em" }}>FAIR TPRM Training Tool</div>
@@ -649,7 +621,6 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Tabs */}
       <div style={{ marginTop: 14 }}>
         <Card style={{ padding: 10 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -676,7 +647,6 @@ export default function Page() {
         </Card>
       </div>
 
-      {/* Context bar */}
       {showContextBar ? (
         <div style={{ marginTop: 14 }}>
           <Card style={{ padding: 12 }}>
@@ -717,6 +687,7 @@ export default function Page() {
                 </div>
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  {/* ✅ FIX: tiering */}
                   <Pill>Index: {selectedVendor ? tierIndex(selectedVendor.tiering || emptyTiering()) : "—"}</Pill>
                   <Pill>Tier: {selectedVendor?.tier || "—"}</Pill>
                 </div>
@@ -741,7 +712,6 @@ export default function Page() {
         </div>
       ) : null}
 
-      {/* Main */}
       <div style={{ marginTop: 14 }}>
         {vendorForm.open ? (
           <VendorForm
