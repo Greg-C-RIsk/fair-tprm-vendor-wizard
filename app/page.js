@@ -1,16 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
 
-// ✅ Views chargées à la demande (évite crash au chargement si un onglet a du code top-level)
-const TieringView = dynamic(() => import("./components/TieringView"), { ssr: false });
-const ScenariosView = dynamic(() => import("./components/ScenariosView"), { ssr: false });
-const QuantifyView = dynamic(() => import("./components/QuantifyView"), { ssr: false });
-const ResultsView = dynamic(() => import("./components/ResultsView"), { ssr: false });
-const TreatmentsView = dynamic(() => import("./components/TreatmentsView"), { ssr: false });
-const DecisionsView = dynamic(() => import("./components/DecisionsView"), { ssr: false });
-const DashboardView = dynamic(() => import("./components/DashboardView"), { ssr: false });
+// Views (components folder)
+import TieringView from "./components/TieringView";
+import ScenariosView from "./components/ScenariosView";
+import QuantifyView from "./components/QuantifyView";
+import ResultsView from "./components/ResultsView";
+import TreatmentsView from "./components/TreatmentsView";
+import DecisionsView from "./components/DecisionsView";
+import DashboardView from "./components/DashboardView";
 
 // Shared model (root /lib)
 import {
@@ -23,20 +22,58 @@ import {
   normalizeState,
 } from "../lib/model";
 
-/**
- * page.js (Shell stable + Mode A Vendors UX + plug-in tabs)
- * - SSR-safe: no random IDs generated during server prerender
- * - localStorage persistence (client only)
- * - Vendors UX: list + details + create/edit form panel
- * - Other tabs: uses ./components/* views
- */
-
 const LS_KEY = "fair_tprm_training_v6";
+
+// ---------------------------
+// Minimal ErrorBoundary (évite la “page blanche”)
+// ---------------------------
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, err: null };
+  }
+  static getDerivedStateFromError(err) {
+    return { hasError: true, err };
+  }
+  componentDidCatch(err) {
+    // log console for debugging
+    // eslint-disable-next-line no-console
+    console.error("UI ErrorBoundary caught:", err);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="container" style={{ padding: 22, maxWidth: 1200, margin: "0 auto" }}>
+          <div
+            style={{
+              border: "1px solid rgba(255,255,255,0.12)",
+              background: "rgba(0,0,0,0.18)",
+              borderRadius: 16,
+              padding: 16,
+            }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 900 }}>Application error</div>
+            <div style={{ marginTop: 8, opacity: 0.85, fontSize: 13 }}>
+              Une exception JS s’est produite. Ouvre la console pour le détail.
+            </div>
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8, whiteSpace: "pre-wrap" }}>
+              {String(this.state.err?.message || this.state.err || "")}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// React n’est pas importé explicitement en Next 14 normalement,
+// mais une classe ErrorBoundary en a besoin.
+import React from "react";
 
 // ---------------------------
 // UI atoms
 // ---------------------------
-
 function Button({ className = "", ...props }) {
   return <button {...props} className={className || "btn"} />;
 }
@@ -103,7 +140,6 @@ function Divider() {
 // ---------------------------
 // Vendors UX (form + list/details)
 // ---------------------------
-
 function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
   return (
     <Card>
@@ -317,7 +353,6 @@ function VendorsView({
                     <div style={{ fontSize: 12, opacity: 0.8 }}>{v.category}</div>
                   </div>
                   <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {/* ✅ FIX: tiering (pas "tiering") */}
                     <Pill>Index: {tierIndex(v.tiering || emptyTiering())}</Pill>
                     <Pill>{scenarioCount} scenario(s)</Pill>
                     <Pill>{v.carryForward ? "Carry-forward" : "Not carried"}</Pill>
@@ -398,7 +433,6 @@ function VendorsView({
               <Card style={{ padding: 12 }}>
                 <div style={{ fontWeight: 900, marginBottom: 6 }}>Prioritization</div>
                 <div style={{ display: "grid", gap: 6 }}>
-                  {/* ✅ FIX: tiering */}
                   <div style={{ fontSize: 13, opacity: 0.9 }}>
                     Index: {tierIndex(selected.tiering || emptyTiering())}
                   </div>
@@ -418,11 +452,12 @@ function VendorsView({
 // ---------------------------
 // Page
 // ---------------------------
-
 export default function Page() {
   const [activeView, setActiveView] = useState("Vendors");
 
-  // SSR-safe init: don’t generate random IDs on server
+  // IMPORTANT: on attend l’hydratation avant de persister / utiliser certains onglets
+  const [hydrated, setHydrated] = useState(false);
+
   const [state, setState] = useState(() => ({
     vendors: [],
     selectedVendorId: "",
@@ -446,20 +481,28 @@ export default function Page() {
       setState(normalized);
     } catch {
       const v = emptyVendor();
-      setState(normalizeState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" }));
+      setState(
+        normalizeState({
+          vendors: [v],
+          selectedVendorId: v.id,
+          selectedScenarioId: v.scenarios?.[0]?.id || "",
+        })
+      );
+    } finally {
+      setHydrated(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist state (client only)
+  // Persist state (client only) — mais seulement APRÈS hydratation
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!hydrated) return;
     try {
       window.localStorage.setItem(LS_KEY, JSON.stringify(normalizeState(state)));
     } catch {
       // ignore
     }
-  }, [state]);
+  }, [hydrated, state]);
 
   const vendors = Array.isArray(state.vendors) ? state.vendors : [];
 
@@ -504,6 +547,7 @@ export default function Page() {
     );
   };
 
+  // ---- Vendor create/edit UX state
   const [vendorForm, setVendorForm] = useState({ open: false, mode: "create", draft: null });
 
   const openCreateVendor = () => {
@@ -577,7 +621,13 @@ export default function Page() {
   const resetAll = () => {
     if (typeof window !== "undefined") window.localStorage.removeItem(LS_KEY);
     const v = emptyVendor();
-    setState(normalizeState({ vendors: [v], selectedVendorId: v.id, selectedScenarioId: v.scenarios?.[0]?.id || "" }));
+    setState(
+      normalizeState({
+        vendors: [v],
+        selectedVendorId: v.id,
+        selectedScenarioId: v.scenarios?.[0]?.id || "",
+      })
+    );
     setActiveView("Vendors");
     closeVendorForm();
   };
@@ -601,159 +651,193 @@ export default function Page() {
 
   const showContextBar = !vendorForm.open && activeView !== "Vendors";
 
+  // Guards (évite crash si scenario null)
+  const needsVendor = activeView !== "Vendors";
+  const needsScenario = ["Quantify", "Results", "Treatments", "Decisions"].includes(activeView);
+
   return (
-    <div className="container" style={{ padding: 22, maxWidth: 1200, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
-        <div>
-          <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.02em" }}>FAIR TPRM Training Tool</div>
-          <div style={{ marginTop: 6, opacity: 0.8 }}>Training only — data stays in your browser.</div>
-          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Pill>{vendors.length} vendor(s)</Pill>
-            <Pill>{totalScenarios} scenario(s)</Pill>
-            <Pill>Carry-forward: {carried}</Pill>
+    <ErrorBoundary>
+      <div className="container" style={{ padding: 22, maxWidth: 1200, margin: "0 auto" }}>
+        {/* Title */}
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.02em" }}>FAIR TPRM Training Tool</div>
+            <div style={{ marginTop: 6, opacity: 0.8 }}>Training only — data stays in your browser.</div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Pill>{vendors.length} vendor(s)</Pill>
+              <Pill>{totalScenarios} scenario(s)</Pill>
+              <Pill>Carry-forward: {carried}</Pill>
+            </div>
           </div>
-        </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Button className="btn" onClick={resetAll}>
-            Reset
-          </Button>
-        </div>
-      </div>
-
-      <div style={{ marginTop: 14 }}>
-        <Card style={{ padding: 10 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {tabs.map((t) => (
-              <button
-                key={t.k}
-                onClick={() => setActiveView(t.k)}
-                style={{
-                  border: "1px solid rgba(255,255,255,0.14)",
-                  background: activeView === t.k ? "rgba(59,130,246,0.22)" : "rgba(255,255,255,0.06)",
-                  color: "inherit",
-                  borderRadius: 999,
-                  padding: "8px 12px",
-                  cursor: "pointer",
-                  fontWeight: 800,
-                  fontSize: 13,
-                  opacity: activeView === t.k ? 1 : 0.92,
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
+            <Button className="btn" onClick={resetAll}>
+              Reset
+            </Button>
           </div>
-        </Card>
-      </div>
+        </div>
 
-      {showContextBar ? (
+        {/* Tabs */}
         <div style={{ marginTop: 14 }}>
-          <Card style={{ padding: 12 }}>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <div style={{ fontSize: 13, opacity: 0.85, fontWeight: 800 }}>Context</div>
+          <Card style={{ padding: 10 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {tabs.map((t) => (
+                <button
+                  key={t.k}
+                  onClick={() => setActiveView(t.k)}
+                  style={{
+                    border: "1px solid rgba(255,255,255,0.14)",
+                    background: activeView === t.k ? "rgba(59,130,246,0.22)" : "rgba(255,255,255,0.06)",
+                    color: "inherit",
+                    borderRadius: 999,
+                    padding: "8px 12px",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                    fontSize: 13,
+                    opacity: activeView === t.k ? 1 : 0.92,
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </Card>
+        </div>
 
-                <div style={{ minWidth: 260 }}>
-                  <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Vendor</div>
-                  <select
-                    className="input"
-                    value={selectedVendor?.id || ""}
-                    onChange={(e) => selectVendor(e.target.value)}
-                    disabled={!vendors.length}
-                  >
-                    {vendors.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.name?.trim() ? v.name : "(Unnamed vendor)"}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+        {/* Context bar */}
+        {showContextBar ? (
+          <div style={{ marginTop: 14 }}>
+            <Card style={{ padding: 12 }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <div style={{ fontSize: 13, opacity: 0.85, fontWeight: 800 }}>Context</div>
 
-                <div style={{ minWidth: 320 }}>
-                  <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Scenario</div>
-                  <select
-                    className="input"
-                    value={selectedScenario?.id || ""}
-                    onChange={(e) => selectScenario(e.target.value)}
-                    disabled={!selectedVendor || !Array.isArray(selectedVendor?.scenarios) || selectedVendor.scenarios.length === 0}
-                  >
-                    {(selectedVendor?.scenarios || []).map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.title?.trim() ? s.title : "(Untitled scenario)"}
-                      </option>
-                    ))}
-                  </select>
+                  <div style={{ minWidth: 260 }}>
+                    <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Vendor</div>
+                    <select
+                      className="input"
+                      value={selectedVendor?.id || ""}
+                      onChange={(e) => selectVendor(e.target.value)}
+                      disabled={!vendors.length}
+                    >
+                      {vendors.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name?.trim() ? v.name : "(Unnamed vendor)"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ minWidth: 320 }}>
+                    <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Scenario</div>
+                    <select
+                      className="input"
+                      value={selectedScenario?.id || ""}
+                      onChange={(e) => selectScenario(e.target.value)}
+                      disabled={!selectedVendor || !Array.isArray(selectedVendor?.scenarios) || selectedVendor.scenarios.length === 0}
+                    >
+                      {(selectedVendor?.scenarios || []).map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.title?.trim() ? s.title : "(Untitled scenario)"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <Pill>Index: {selectedVendor ? tierIndex(selectedVendor.tiering || emptyTiering()) : "—"}</Pill>
+                    <Pill>Tier: {selectedVendor?.tier || "—"}</Pill>
+                  </div>
                 </div>
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  {/* ✅ FIX: tiering */}
-                  <Pill>Index: {selectedVendor ? tierIndex(selectedVendor.tiering || emptyTiering()) : "—"}</Pill>
-                  <Pill>Tier: {selectedVendor?.tier || "—"}</Pill>
+                  <Button className="btn" onClick={() => setActiveView("Vendors")}>
+                    Manage vendors
+                  </Button>
                 </div>
               </div>
 
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <Button className="btn" onClick={() => setActiveView("Vendors")}>
-                  Manage vendors
-                </Button>
-              </div>
-            </div>
+              {!selectedVendor ? (
+                <>
+                  <Divider />
+                  <div style={{ fontSize: 13, opacity: 0.85 }}>
+                    No vendor selected yet. Go to <strong>Vendors</strong> and create one.
+                  </div>
+                </>
+              ) : null}
+            </Card>
+          </div>
+        ) : null}
 
-            {!selectedVendor ? (
-              <>
-                <Divider />
-                <div style={{ fontSize: 13, opacity: 0.85 }}>
-                  No vendor selected yet. Go to <strong>Vendors</strong> and create one.
-                </div>
-              </>
-            ) : null}
-          </Card>
+        {/* Main */}
+        <div style={{ marginTop: 14 }}>
+          {!hydrated ? (
+            <Card>
+              <div style={{ fontSize: 16, fontWeight: 900 }}>Loading…</div>
+              <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>Hydrating local data.</div>
+            </Card>
+          ) : vendorForm.open ? (
+            <VendorForm
+              mode={vendorForm.mode}
+              draft={vendorForm.draft}
+              onChange={(next) => setVendorForm((p) => ({ ...p, draft: next }))}
+              onCancel={closeVendorForm}
+              onSubmit={vendorForm.mode === "create" ? createVendor : saveVendor}
+            />
+          ) : activeView === "Vendors" ? (
+            <VendorsView
+              vendors={vendors}
+              selectedVendorId={selectedVendor?.id || ""}
+              onSelectVendor={(id) => selectVendor(id)}
+              onRequestCreate={openCreateVendor}
+              onRequestEdit={openEditVendor}
+              onDeleteVendor={deleteVendor}
+              onGoTiering={() => setActiveView("Tiering")}
+            />
+          ) : needsVendor && !selectedVendor ? (
+            <Card>
+              <div style={{ fontSize: 18, fontWeight: 900 }}>No vendor</div>
+              <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
+                Create a vendor first in <strong>Vendors</strong>.
+              </div>
+            </Card>
+          ) : needsScenario && !selectedScenario ? (
+            <Card>
+              <div style={{ fontSize: 18, fontWeight: 900 }}>No scenario</div>
+              <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
+                Create/select a scenario in <strong>Scenarios</strong> first.
+              </div>
+            </Card>
+          ) : activeView === "Tiering" ? (
+            <TieringView vendor={selectedVendor} updateVendor={updateVendor} setActiveView={setActiveView} />
+          ) : activeView === "Scenarios" ? (
+            <ScenariosView
+              vendor={selectedVendor}
+              selectedScenarioId={state.selectedScenarioId}
+              onSelectScenario={(id) => selectScenario(id)}
+              updateVendor={updateVendor}
+              setActiveView={setActiveView}
+            />
+          ) : activeView === "Quantify" ? (
+            <QuantifyView vendor={selectedVendor} scenario={selectedScenario} />
+          ) : activeView === "Results" ? (
+            <ResultsView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} setActiveView={setActiveView} />
+          ) : activeView === "Treatments" ? (
+            <TreatmentsView vendor={selectedVendor} scenario={selectedScenario} />
+          ) : activeView === "Decisions" ? (
+            <DecisionsView vendor={selectedVendor} scenario={selectedScenario} />
+          ) : activeView === "Dashboard" ? (
+            <DashboardView vendors={vendors} />
+          ) : (
+            <Card>
+              <div style={{ fontSize: 18, fontWeight: 900 }}>Unknown view</div>
+              <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
+                This tab is not wired yet.
+              </div>
+            </Card>
+          )}
         </div>
-      ) : null}
-
-      <div style={{ marginTop: 14 }}>
-        {vendorForm.open ? (
-          <VendorForm
-            mode={vendorForm.mode}
-            draft={vendorForm.draft}
-            onChange={(next) => setVendorForm((p) => ({ ...p, draft: next }))}
-            onCancel={closeVendorForm}
-            onSubmit={vendorForm.mode === "create" ? createVendor : saveVendor}
-          />
-        ) : activeView === "Vendors" ? (
-          <VendorsView
-            vendors={vendors}
-            selectedVendorId={selectedVendor?.id || ""}
-            onSelectVendor={(id) => selectVendor(id)}
-            onRequestCreate={openCreateVendor}
-            onRequestEdit={openEditVendor}
-            onDeleteVendor={deleteVendor}
-            onGoTiering={() => setActiveView("Tiering")}
-          />
-        ) : activeView === "Tiering" ? (
-          <TieringView vendor={selectedVendor} updateVendor={updateVendor} setActiveView={setActiveView} />
-        ) : activeView === "Scenarios" ? (
-          <ScenariosView vendor={selectedVendor} updateVendor={updateVendor} setActiveView={setActiveView} />
-        ) : activeView === "Quantify" ? (
-          <QuantifyView vendor={selectedVendor} scenario={selectedScenario} />
-        ) : activeView === "Results" ? (
-          <ResultsView scenario={selectedScenario} />
-        ) : activeView === "Treatments" ? (
-          <TreatmentsView vendor={selectedVendor} scenario={selectedScenario} />
-        ) : activeView === "Decisions" ? (
-          <DecisionsView vendor={selectedVendor} scenario={selectedScenario} />
-        ) : activeView === "Dashboard" ? (
-          <DashboardView vendors={vendors} />
-        ) : (
-          <Card>
-            <div style={{ fontSize: 18, fontWeight: 900 }}>Unknown view</div>
-            <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
-              This tab is not wired yet.
-            </div>
-          </Card>
-        )}
       </div>
-    </div>
+    </ErrorBoundary>
   );
 }
