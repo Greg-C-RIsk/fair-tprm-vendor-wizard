@@ -3,11 +3,17 @@
 import { useMemo, useRef, useState } from "react";
 import { ensureQuant, runFairMonteCarlo } from "../../lib/fairEngine";
 
-// ------------------ Helpers ------------------
+/**
+ * ResultsView (Pedagogical)
+ * - Uses scenario.quant (FAIR inputs + Monte Carlo outputs)
+ * - Can re-run the simulation here
+ * - Writes results back into scenario.quant (so Dashboard etc. can reuse)
+ * - Interactive charts (hover tooltips)
+ */
 
 const money = (n) => {
-  if (!Number.isFinite(n)) return "–";
-  return new Intl.NumberFormat("fr-FR", {
+  if (!Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("en-GB", {
     style: "currency",
     currency: "EUR",
     maximumFractionDigits: 0,
@@ -15,41 +21,13 @@ const money = (n) => {
 };
 
 const pct = (x) => {
-  if (!Number.isFinite(x)) return "–";
-  return `${(x * 100).toFixed(1)}%`;
+  if (!Number.isFinite(x)) return "—";
+  return `${(x * 100).toFixed(2)}%`;
 };
 
-const mean = (arr) => {
-  if (!arr?.length) return 0;
-  let s = 0;
-  for (const v of arr) s += v;
-  return s / arr.length;
-};
-
-const quantile = (arr, q) => {
-  if (!arr?.length) return 0;
-  const a = [...arr].sort((x, y) => x - y);
-  const pos = (a.length - 1) * q;
-  const base = Math.floor(pos);
-  const rest = pos - base;
-  if (a[base + 1] === undefined) return a[base];
-  return a[base] + rest * (a[base + 1] - a[base]);
-};
-
-// CVaR (Expected Shortfall) = moyenne des pires X%
-const cvar = (arr, q = 0.9) => {
-  if (!arr?.length) return 0;
-  const a = [...arr].sort((x, y) => x - y);
-  const start = Math.floor((a.length - 1) * q);
-  const tail = a.slice(start);
-  return mean(tail);
-};
-
-const exceedProb = (arr, x) => {
-  if (!arr?.length) return 0;
-  let c = 0;
-  for (const v of arr) if (v > x) c++;
-  return c / arr.length;
+const fmt = (n, digits = 2) => {
+  if (!Number.isFinite(n)) return "—";
+  return Number(n).toFixed(digits);
 };
 
 function Card({ children, style }) {
@@ -69,421 +47,481 @@ function Card({ children, style }) {
   );
 }
 
-// ------------------ Interactive Histogram (tooltip) ------------------
+function StatLine({ label, value, help }) {
+  return (
+    <div style={{ display: "grid", gap: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ fontWeight: 850 }}>{label}</div>
+        <div style={{ fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      </div>
+      {help ? (
+        <div style={{ fontSize: 12, opacity: 0.75, lineHeight: 1.3 }}>{help}</div>
+      ) : null}
+    </div>
+  );
+}
 
-function Histogram({ title, values }) {
+function Hint({ children }) {
+  return (
+    <div style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.45 }}>
+      {children}
+    </div>
+  );
+}
+
+/** Histogram with hover tooltip (Annual Loss) */
+function Histogram({ title, subtitle, values, bins = 28 }) {
   const [hover, setHover] = useState(null);
-  if (!values?.length) return null;
 
-  const bins = 28;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = Math.max(1e-9, max - min);
+  const model = useMemo(() => {
+    if (!values?.length) return null;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = Math.max(1e-9, max - min);
+    const counts = Array.from({ length: bins }, () => 0);
 
-  const counts = Array.from({ length: bins }, () => 0);
+    values.forEach((v) => {
+      const i = Math.max(0, Math.min(bins - 1, Math.floor(((v - min) / span) * bins)));
+      counts[i]++;
+    });
 
-  values.forEach((v) => {
-    const idx = Math.min(bins - 1, Math.floor(((v - min) / span) * bins));
-    counts[idx]++;
-  });
+    const peak = Math.max(...counts);
+    const total = values.length;
 
-  const peak = Math.max(...counts);
-  const total = values.length;
+    const binEdges = Array.from({ length: bins + 1 }, (_, i) => min + (i / bins) * span);
 
-  const binRange = (i) => {
-    const a = min + (i / bins) * span;
-    const b = min + ((i + 1) / bins) * span;
-    return { a, b };
-  };
+    return { min, max, span, counts, peak, total, binEdges };
+  }, [values, bins]);
+
+  if (!model) return null;
 
   return (
-    <Card style={{ padding: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-        <strong>{title}</strong>
-        <div style={{ fontSize: 12, opacity: 0.75 }}>
-          Survoler une barre pour voir la probabilité estimée.
-        </div>
+    <Card style={{ padding: 14 }}>
+      <div style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>{title}</div>
+        {subtitle ? <div style={{ fontSize: 13, opacity: 0.8 }}>{subtitle}</div> : null}
       </div>
 
-      <div style={{ position: "relative", marginTop: 12 }}>
-        {hover ? (
-          <div
-            style={{
-              position: "absolute",
-              top: 0,
-              right: 0,
-              background: "rgba(0,0,0,0.75)",
-              border: "1px solid rgba(255,255,255,0.15)",
-              borderRadius: 10,
-              padding: "8px 10px",
-              fontSize: 12,
-              maxWidth: 260,
-            }}
-          >
-            <div style={{ fontWeight: 900, marginBottom: 4 }}>Bin</div>
-            <div>
-              Range: <span style={{ fontWeight: 800 }}>{money(hover.a)}</span> →{" "}
-              <span style={{ fontWeight: 800 }}>{money(hover.b)}</span>
-            </div>
-            <div>
-              Fréquence: <span style={{ fontWeight: 800 }}>{hover.count}</span> / {total} (
-              <span style={{ fontWeight: 800 }}>{pct(hover.count / total)}</span>)
-            </div>
-          </div>
-        ) : null}
-
-        <div
-          style={{
-            display: "flex",
-            gap: 4,
-            alignItems: "flex-end",
-            height: 140,
-          }}
-        >
-          {counts.map((c, i) => {
-            const h = peak ? (c / peak) * 100 : 0;
-            const r = binRange(i);
+      <div style={{ marginTop: 12, position: "relative" }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "flex-end", height: 140 }}>
+          {model.counts.map((c, i) => {
+            const h = model.peak ? (c / model.peak) * 100 : 0;
+            const from = model.binEdges[i];
+            const to = model.binEdges[i + 1];
             return (
               <div
                 key={i}
-                onMouseEnter={() => setHover({ ...r, count: c })}
+                onMouseEnter={() =>
+                  setHover({
+                    i,
+                    from,
+                    to,
+                    count: c,
+                    prob: c / model.total,
+                  })
+                }
                 onMouseLeave={() => setHover(null)}
                 style={{
                   flex: 1,
                   height: `${h}%`,
                   background: "currentColor",
-                  opacity: 0.78,
+                  opacity: hover?.i === i ? 0.95 : 0.65,
                   borderRadius: 4,
                   cursor: "default",
                 }}
-                title={`${money(r.a)} → ${money(r.b)} | ${c}/${total}`}
+                aria-label={`Bin ${i}`}
               />
             );
           })}
         </div>
 
-        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-          Axe X = perte annuelle (€). Axe Y = fréquence relative (probabilité estimée).
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// ------------------ Interactive Exceedance Curve (tooltip) ------------------
-
-function ExceedanceCurve({ values }) {
-  const [hover, setHover] = useState(null);
-  if (!values?.length) return null;
-
-  const sorted = [...values].sort((a, b) => a - b);
-  const n = sorted.length;
-
-  // points réduits pour un SVG plus léger
-  const points = 220;
-  const pts = Array.from({ length: points }, (_, i) => {
-    const idx = Math.min(n - 1, Math.floor((i / (points - 1)) * (n - 1)));
-    const x = sorted[idx];
-    const exceed = 1 - idx / (n - 1);
-    return { x, exceed };
-  });
-
-  const minX = pts[0].x;
-  const maxX = pts[pts.length - 1].x;
-  const padL = 40;
-  const padR = 20;
-  const padT = 20;
-  const padB = 26;
-  const W = 560;
-  const H = 190;
-  const innerW = W - padL - padR;
-  const innerH = H - padT - padB;
-
-  const mapX = (x) => padL + ((x - minX) / Math.max(1e-9, maxX - minX)) * innerW;
-  const mapY = (y) => padT + (1 - y) * innerH; // y = exceed prob (1..0)
-
-  const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${mapX(p.x)} ${mapY(p.exceed)}`).join(" ");
-
-  const onMove = (evt) => {
-    const rect = evt.currentTarget.getBoundingClientRect();
-    const mx = evt.clientX - rect.left;
-    // convertir mx -> x -> index
-    const t = (mx - padL) / innerW;
-    const clamped = Math.max(0, Math.min(1, t));
-    const idx = Math.round(clamped * (pts.length - 1));
-    const p = pts[idx];
-
-    const rp = p.exceed > 0 ? 1 / p.exceed : Infinity; // "return period"
-    setHover({
-      x: p.x,
-      exceed: p.exceed,
-      returnPeriod: rp,
-      sx: mapX(p.x),
-      sy: mapY(p.exceed),
-    });
-  };
-
-  return (
-    <Card style={{ padding: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-        <strong>Loss Exceedance Curve</strong>
-        <div style={{ fontSize: 12, opacity: 0.75 }}>
-          Survoler la courbe → probabilité exacte + “return period”.
-        </div>
-      </div>
-
-      <div style={{ position: "relative", marginTop: 10 }}>
         {hover ? (
           <div
             style={{
               position: "absolute",
-              left: 10,
               top: 0,
-              background: "rgba(0,0,0,0.75)",
-              border: "1px solid rgba(255,255,255,0.15)",
-              borderRadius: 10,
+              left: 0,
+              transform: "translate(0, -8px)",
               padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.14)",
+              background: "rgba(0,0,0,0.55)",
+              backdropFilter: "blur(6px)",
               fontSize: 12,
-              maxWidth: 300,
+              pointerEvents: "none",
+              maxWidth: 280,
             }}
           >
-            <div style={{ fontWeight: 900, marginBottom: 4 }}>Point sur la courbe</div>
-            <div>
-              Seuil x: <span style={{ fontWeight: 800 }}>{money(hover.x)}</span>
+            <div style={{ fontWeight: 900 }}>Annual loss bin</div>
+            <div style={{ marginTop: 6, opacity: 0.9 }}>
+              Range: {money(hover.from)} → {money(hover.to)}
             </div>
-            <div>
-              P(Perte annuelle &gt; x): <span style={{ fontWeight: 800 }}>{pct(hover.exceed)}</span>
-            </div>
-            <div style={{ opacity: 0.85 }}>
-              Return period ≈{" "}
-              <span style={{ fontWeight: 800 }}>
-                {Number.isFinite(hover.returnPeriod) ? `${hover.returnPeriod.toFixed(1)} ans` : "—"}
-              </span>{" "}
-              (approx.)
+            <div style={{ opacity: 0.9 }}>
+              Simulations in bin: {hover.count.toLocaleString()} ({pct(hover.prob)})
             </div>
           </div>
         ) : null}
+      </div>
 
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          style={{ width: "100%", height: "auto", display: "block" }}
-          onMouseMove={onMove}
-          onMouseLeave={() => setHover(null)}
-        >
-          {/* axes */}
-          <path d={`M${padL} ${padT} L${padL} ${H - padB} L${W - padR} ${H - padB}`} stroke="currentColor" opacity="0.25" fill="none" />
-
-          {/* curve */}
-          <path d={d} stroke="currentColor" strokeWidth="2.2" fill="none" />
-
-          {/* hover point */}
-          {hover ? (
-            <>
-              <line x1={hover.sx} y1={padT} x2={hover.sx} y2={H - padB} stroke="currentColor" opacity="0.2" />
-              <line x1={padL} y1={hover.sy} x2={W - padR} y2={hover.sy} stroke="currentColor" opacity="0.2" />
-              <circle cx={hover.sx} cy={hover.sy} r="4.5" fill="currentColor" />
-            </>
-          ) : null}
-        </svg>
-
-        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-          Axe X = seuil de perte annuelle (€). Axe Y = probabilité que la perte annuelle dépasse ce seuil.
-        </div>
+      <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+        X-axis: annual loss amount • Y-axis: relative frequency (how often the simulation landed in that range)
       </div>
     </Card>
   );
 }
 
-// ------------------ Main ------------------
+/** Exceedance curve with hover tooltip */
+function ExceedanceCurve({ title, subtitle, curve }) {
+  const [hover, setHover] = useState(null);
+  const svgRef = useRef(null);
+
+  const pts = curve?.pts || [];
+  if (!pts.length) return null;
+
+  const xs = pts.map((p) => p.x);
+  const ys = pts.map((p) => p.exceed);
+
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = 0;
+  const maxY = 1;
+
+  // SVG frame
+  const W = 560;
+  const H = 180;
+  const padL = 50;
+  const padR = 20;
+  const padT = 18;
+  const padB = 34;
+
+  const mapX = (x) => padL + ((x - minX) / Math.max(1e-9, maxX - minX)) * (W - padL - padR);
+  const mapY = (y) => padT + (1 - (y - minY) / Math.max(1e-9, maxY - minY)) * (H - padT - padB);
+
+  const d = pts
+    .map((p, i) => `${i === 0 ? "M" : "L"} ${mapX(p.x).toFixed(2)} ${mapY(p.exceed).toFixed(2)}`)
+    .join(" ");
+
+  const onMove = (e) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    const rect = svg.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+
+    // Convert mouse X back to domain X, then find nearest point by X
+    const t = (mx - padL) / Math.max(1e-9, (W - padL - padR));
+    const domainX = minX + t * (maxX - minX);
+
+    let best = null;
+    let bestDist = Infinity;
+    for (const p of pts) {
+      const dist = Math.abs(p.x - domainX);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = p;
+      }
+    }
+    if (best) setHover(best);
+  };
+
+  return (
+    <Card style={{ padding: 14 }}>
+      <div style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>{title}</div>
+        {subtitle ? <div style={{ fontSize: 13, opacity: 0.8 }}>{subtitle}</div> : null}
+      </div>
+
+      <div style={{ marginTop: 12, position: "relative" }}>
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${W} ${H}`}
+          style={{ width: "100%", height: "auto" }}
+          onMouseMove={onMove}
+          onMouseLeave={() => setHover(null)}
+        >
+          {/* axes */}
+          <path
+            d={`M ${padL} ${padT} L ${padL} ${H - padB} L ${W - padR} ${H - padB}`}
+            stroke="currentColor"
+            opacity="0.18"
+            fill="none"
+          />
+
+          {/* curve */}
+          <path d={d} stroke="currentColor" strokeWidth="2.5" fill="none" opacity="0.95" />
+
+          {/* hover marker */}
+          {hover ? (
+            <>
+              <circle cx={mapX(hover.x)} cy={mapY(hover.exceed)} r="4.5" fill="currentColor" />
+              <line
+                x1={mapX(hover.x)}
+                y1={padT}
+                x2={mapX(hover.x)}
+                y2={H - padB}
+                stroke="currentColor"
+                opacity="0.12"
+              />
+              <line
+                x1={padL}
+                y1={mapY(hover.exceed)}
+                x2={W - padR}
+                y2={mapY(hover.exceed)}
+                stroke="currentColor"
+                opacity="0.12"
+              />
+            </>
+          ) : null}
+        </svg>
+
+        {hover ? (
+          <div
+            style={{
+              position: "absolute",
+              right: 12,
+              top: 10,
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.14)",
+              background: "rgba(0,0,0,0.55)",
+              backdropFilter: "blur(6px)",
+              fontSize: 12,
+              maxWidth: 320,
+            }}
+          >
+            <div style={{ fontWeight: 900 }}>Point details</div>
+            <div style={{ marginTop: 6, opacity: 0.92 }}>
+              Loss threshold (x): <strong>{money(hover.x)}</strong>
+            </div>
+            <div style={{ opacity: 0.92 }}>
+              P(Annual Loss &gt; x): <strong>{pct(hover.exceed)}</strong>
+            </div>
+            <div style={{ marginTop: 6, opacity: 0.75, lineHeight: 1.3 }}>
+              Interpretation: in {pct(hover.exceed)} of simulated years, annual loss exceeds {money(hover.x)}.
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+        The exceedance curve answers: “How likely is it to exceed a given annual loss amount?”
+      </div>
+    </Card>
+  );
+}
 
 export default function ResultsView({ vendor, scenario, updateVendor, setActiveView }) {
   if (!vendor || !scenario) {
-    return <Card>No scenario selected.</Card>;
+    return (
+      <Card>
+        <div style={{ fontSize: 18, fontWeight: 950 }}>FAIR Results</div>
+        <div style={{ marginTop: 8, opacity: 0.8 }}>No vendor/scenario selected.</div>
+      </Card>
+    );
   }
 
-  const q = ensureQuant(scenario.quant || {});
+  const quantFromScenario = ensureQuant(scenario.quant || {});
   const [running, setRunning] = useState(false);
-  const [results, setResults] = useState(null);
-  const cancelRef = useRef(false);
+  const [progress, setProgress] = useState("");
+  const [localQuant, setLocalQuant] = useState(quantFromScenario);
 
-  const runSimulation = async () => {
+  // Prefer the most recent persisted quant results
+  const q = useMemo(() => ensureQuant(localQuant), [localQuant]);
+
+  const hasOutputs = !!q.stats && Array.isArray(q.aleSamples) && q.aleSamples.length > 0;
+
+  const run = async () => {
     setRunning(true);
-    cancelRef.current = false;
-
+    setProgress("Starting…");
     try {
-      const out = await runFairMonteCarlo(q, {
-        sims: q.sims || 10000,
-        curvePoints: 80,
-        chunkSize: 600,
+      const base = ensureQuant(q);
+
+      const out = await runFairMonteCarlo(base, {
+        sims: base.sims,
+        onProgress: ({ done, total, label }) => {
+          setProgress(label || `${done}/${total}`);
+        },
         yield: true,
-        shouldCancel: () => cancelRef.current,
       });
 
-      // Optionnel: persister dans quant pour réutiliser sur Dashboard
+      const merged = ensureQuant({ ...base, ...out });
+
+      // Update local UI immediately
+      setLocalQuant(merged);
+
+      // Persist into the scenario so Dashboard can reuse it
       const nextScenarios = (vendor.scenarios || []).map((s) =>
-        s.id === scenario.id ? { ...s, quant: { ...q, ...out } } : s
+        s.id === scenario.id ? { ...s, quant: merged } : s
       );
       updateVendor(vendor.id, { scenarios: nextScenarios });
 
-      setResults(out);
-    } catch (e) {
+      setProgress("Done.");
+      setTimeout(() => setProgress(""), 900);
+    } catch (err) {
       // eslint-disable-next-line no-console
-      console.error(e);
-      alert(
-        e?.missing?.length
-          ? `Champs manquants:\n- ${e.missing.join("\n- ")}`
-          : `Erreur: ${e?.message || "unknown"}`
-      );
+      console.error(err);
+      const msg =
+        err?.missing?.length
+          ? `Missing inputs: ${err.missing.join(", ")}`
+          : err?.message || "Simulation failed.";
+      setProgress(msg);
     } finally {
       setRunning(false);
     }
   };
 
-  const derived = useMemo(() => {
-    if (!results?.aleSamples?.length) return null;
-
-    const ale = results.aleSamples;
-    const pel = results.pelSamples || [];
-
-    const aal = mean(ale); // Average Annual Loss (moyenne)
-    const pZero = exceedProb(ale, 0) ? 1 - exceedProb(ale, 0) : 0; // P(<=0) approx
-    const pLoss = exceedProb(ale, 0); // P(>0)
-
-    const var90 = quantile(ale, 0.9);
-    const var95 = quantile(ale, 0.95);
-    const cvar90 = cvar(ale, 0.9);
-    const cvar95 = cvar(ale, 0.95);
-
-    // Seuils pédagogiques (tu peux en changer)
-    const pGT1M = exceedProb(ale, 1_000_000);
-    const pGT10M = exceedProb(ale, 10_000_000);
-
-    return {
-      aal,
-      pZero,
-      pLoss,
-      var90,
-      var95,
-      cvar90,
-      cvar95,
-      pGT1M,
-      pGT10M,
-      pelML: pel.length ? quantile(pel, 0.5) : 0,
-    };
-  }, [results]);
+  const s = q.stats;
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
+      {/* Header */}
       <Card>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 20, fontWeight: 950 }}>FAIR Results</div>
-            <div style={{ marginTop: 6, fontSize: 13, opacity: 0.82 }}>
-              Cette page montre la <strong>distribution</strong> des pertes annuelles simulées (Monte Carlo) à partir de tes entrées FAIR.
+            <div style={{ fontSize: 22, fontWeight: 980 }}>FAIR Results</div>
+            <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>
+              This page explains what the Monte Carlo simulation produced and how to interpret it.
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <button className="btn" onClick={() => setActiveView?.("Quantify")}>
-              Back
+              Back to Quantify
             </button>
-            <button className="btn" onClick={() => (cancelRef.current = true)} disabled={!running}>
-              Cancel
-            </button>
-            <button className="btn primary" disabled={running} onClick={runSimulation}>
+            <button className="btn primary" onClick={run} disabled={running}>
               {running ? "Running…" : "Run Monte Carlo"}
             </button>
           </div>
         </div>
 
-        <div style={{ marginTop: 12, fontSize: 13, opacity: 0.85, lineHeight: 1.5 }}>
-          <div>
-            💡 <strong>Important</strong> : il est normal d’avoir souvent <strong>ALE = 0€</strong> sur une partie des simulations si la fréquence (LEF) est faible.
-            Monte Carlo simule des années où il ne se passe “rien”, donc <em>perte annuelle = 0</em> ces années-là.
+        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ fontSize: 12, opacity: 0.75 }}>
+            Simulations: <strong>{Number(q.sims || 10000).toLocaleString()}</strong>
           </div>
+          <div style={{ fontSize: 12, opacity: 0.75 }}>
+            Last run: <strong>{q.lastRunAt ? new Date(q.lastRunAt).toLocaleString() : "—"}</strong>
+          </div>
+          {progress ? (
+            <div style={{ fontSize: 12, opacity: 0.85 }}>
+              Status: <strong>{progress}</strong>
+            </div>
+          ) : null}
         </div>
       </Card>
 
-      {results?.stats ? (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
-          <Card>
-            <div style={{ fontSize: 16, fontWeight: 950 }}>Résumé — ALE (Annualized Loss Exposure)</div>
-            <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85, lineHeight: 1.5 }}>
-              L’ALE est la <strong>perte annuelle</strong> (en €) : on simule une année entière, avec un nombre d’évènements (Poisson) et une perte par évènement.
-            </div>
-
-            <div style={{ marginTop: 12, display: "grid", gap: 6, fontSize: 13 }}>
-              <div>p10 (optimiste): <strong>{money(results.stats.ale.p10)}</strong></div>
-              <div>p50 (médiane): <strong>{money(results.stats.ale.ml)}</strong></div>
-              <div>p90 (pire 10%): <strong>{money(results.stats.ale.p90)}</strong></div>
-              <div>~min (p01): <strong>{money(results.stats.ale.min)}</strong></div>
-              <div>~max (p99): <strong>{money(results.stats.ale.max)}</strong></div>
-            </div>
-
-            {derived ? (
-              <>
-                <div style={{ marginTop: 14, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
-                  <div style={{ fontSize: 13, fontWeight: 900 }}>Lecture pédagogique</div>
-                  <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85, lineHeight: 1.5 }}>
-                    • <strong>Moyenne (AAL)</strong> : {money(derived.aal)} → “ce qu’on s’attend à perdre en moyenne par an”.<br />
-                    • <strong>P(perte &gt; 0€)</strong> : {pct(derived.pLoss)} → probabilité qu’au moins un évènement arrive dans l’année.<br />
-                    • <strong>VaR 95%</strong> : {money(derived.var95)} → un seuil dépassé seulement dans ~5% des années (selon le modèle).<br />
-                    • <strong>CVaR 95%</strong> : {money(derived.cvar95)} → moyenne des pertes dans les 5% des pires années.
-                  </div>
-                </div>
-              </>
-            ) : null}
-          </Card>
-
-          <Card>
-            <div style={{ fontSize: 16, fontWeight: 950 }}>Résumé — Per-event loss (PEL)</div>
-            <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85, lineHeight: 1.5 }}>
-              La PEL est la <strong>perte par évènement</strong> : <em>Primary Loss + (Secondary LEF × Secondary LM)</em>.
-            </div>
-
-            <div style={{ marginTop: 12, display: "grid", gap: 6, fontSize: 13 }}>
-              <div>p10: <strong>{money(results.stats.pel.p10)}</strong></div>
-              <div>p50 (médiane): <strong>{money(results.stats.pel.ml)}</strong></div>
-              <div>p90: <strong>{money(results.stats.pel.p90)}</strong></div>
-              <div>~min (p01): <strong>{money(results.stats.pel.min)}</strong></div>
-              <div>~max (p99): <strong>{money(results.stats.pel.max)}</strong></div>
-            </div>
-
-            {derived ? (
-              <div style={{ marginTop: 14, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
-                <div style={{ fontSize: 13, fontWeight: 900 }}>Exemples de lecture</div>
-                <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85, lineHeight: 1.5 }}>
-                  • “Une perte typique par évènement” ≈ médiane = <strong>{money(derived.pelML)}</strong>.<br />
-                  • Si la fréquence augmente, l’ALE augmente même si la PEL reste identique.
-                </div>
-              </div>
-            ) : null}
-          </Card>
+      {/* Pedagogical explanation */}
+      <Card>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>What are you looking at?</div>
+        <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+          <Hint>
+            <strong>Monte Carlo simulation</strong> runs the FAIR model thousands of times. Each run samples your
+            <strong> min / most-likely / max</strong> inputs (triangular distributions), then computes a possible
+            annual outcome. The collection of outcomes becomes a distribution.
+          </Hint>
+          <Hint>
+            <strong>ALE</strong> (Annualized Loss Exposure) is the simulated <strong>annual loss</strong>.
+            <strong> PEL</strong> (Per-Event Loss) is the simulated loss for <strong>one loss event</strong>.
+          </Hint>
+          <Hint>
+            Percentiles are key: <strong>P10</strong> means “10% of simulated years are below this value”.
+            <strong> P90</strong> means “90% are below this value” (or 10% are above it).
+          </Hint>
         </div>
-      ) : (
+      </Card>
+
+      {/* Summary stats */}
+      {!hasOutputs ? (
         <Card>
-          <div style={{ opacity: 0.85 }}>
-            Clique sur <strong>Run Monte Carlo</strong> pour générer les résultats.
+          <div style={{ fontSize: 16, fontWeight: 950 }}>No results yet</div>
+          <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
+            Click <strong>Run Monte Carlo</strong> to generate results. If you get an error, it usually means some
+            inputs are missing or not numeric.
           </div>
         </Card>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
+          <Card>
+            <div style={{ fontSize: 16, fontWeight: 950 }}>ALE (Annualized Loss Exposure)</div>
+            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+              <StatLine
+                label="P10"
+                value={money(s.ale.p10)}
+                help="10% of simulated years are at or below this annual loss."
+              />
+              <StatLine
+                label="P50 (median)"
+                value={money(s.ale.ml)}
+                help="The middle outcome: half of the simulated years are below, half are above."
+              />
+              <StatLine
+                label="P90"
+                value={money(s.ale.p90)}
+                help="90% of simulated years are at or below this annual loss (10% exceed it)."
+              />
+              <div style={{ height: 1, background: "rgba(255,255,255,0.10)", margin: "6px 0" }} />
+              <StatLine label="~Min (P01)" value={money(s.ale.min)} help="A low-end tail estimate (1st percentile)." />
+              <StatLine label="~Max (P99)" value={money(s.ale.max)} help="A high-end tail estimate (99th percentile)." />
+            </div>
+          </Card>
+
+          <Card>
+            <div style={{ fontSize: 16, fontWeight: 950 }}>PEL (Per-Event Loss)</div>
+            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+              <StatLine
+                label="P10"
+                value={money(s.pel.p10)}
+                help="10% of loss events are at or below this per-event loss."
+              />
+              <StatLine
+                label="P50 (median)"
+                value={money(s.pel.ml)}
+                help="Typical per-event loss (median)."
+              />
+              <StatLine
+                label="P90"
+                value={money(s.pel.p90)}
+                help="Higher-end per-event loss (90th percentile)."
+              />
+              <div style={{ height: 1, background: "rgba(255,255,255,0.10)", margin: "6px 0" }} />
+              <StatLine label="~Min (P01)" value={money(s.pel.min)} help="Low-end tail estimate (1st percentile)." />
+              <StatLine label="~Max (P99)" value={money(s.pel.max)} help="High-end tail estimate (99th percentile)." />
+            </div>
+          </Card>
+        </div>
       )}
 
-      {results?.aleSamples?.length ? (
-        <>
-          <Histogram title="Annual Loss Distribution (ALE)" values={results.aleSamples} />
-          <ExceedanceCurve values={results.aleSamples} />
+      {/* Charts */}
+      {hasOutputs ? (
+        <div style={{ display: "grid", gap: 14 }}>
+          <Histogram
+            title="Annual Loss Distribution (Histogram)"
+            subtitle="Hover a bar to see the loss range and how often it occurred in the simulation."
+            values={q.aleSamples}
+          />
 
-          {derived ? (
-            <Card>
-              <div style={{ fontSize: 16, fontWeight: 950 }}>Quelques questions “pédagogiques”</div>
-              <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85, lineHeight: 1.6 }}>
-                • “Quelle est la probabilité de dépasser 1M€ de perte annuelle ?” → <strong>{pct(derived.pGT1M)}</strong><br />
-                • “Quelle est la probabilité de dépasser 10M€ ?” → <strong>{pct(derived.pGT10M)}</strong><br />
-                • “Pourquoi beaucoup de 0€ ?” → si LEF est faible, beaucoup d’années simulées ont 0 évènement, donc 0€.
-              </div>
-            </Card>
-          ) : null}
-        </>
+          <ExceedanceCurve
+            title="Loss Exceedance Curve"
+            subtitle="Hover the curve to see the probability of exceeding a given annual loss threshold."
+            curve={q.curve}
+          />
+
+          <Card>
+            <div style={{ fontSize: 16, fontWeight: 950 }}>How to interpret these results</div>
+            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+              <Hint>
+                If you need a <strong>typical planning number</strong>, use <strong>P50</strong> (median).
+              </Hint>
+              <Hint>
+                If you need a <strong>risk-averse / stress</strong> number (e.g., for buffers), look at <strong>P90</strong>
+                or the exceedance curve at your chosen threshold.
+              </Hint>
+              <Hint>
+                The shape of the histogram shows uncertainty: a wide spread means your inputs allow very different outcomes.
+                Tighten inputs (better evidence) to reduce uncertainty.
+              </Hint>
+            </div>
+          </Card>
+        </div>
       ) : null}
     </div>
   );
