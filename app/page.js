@@ -817,7 +817,12 @@ export default function Page() {
     selectScenario={selectScenario}
   />
 ) : activeView === "Quantify" ? (
-            <QuantifyView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} />
+            <QuantifyView
+  vendor={selectedVendor}
+  scenario={selectedScenario}
+  updateVendor={updateVendor}
+  setActiveView={setActiveView}
+/>
           ) : activeView === "Results" ? (
             <ResultsView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} setActiveView={setActiveView} />
           ) : activeView === "Treatments" ? (
