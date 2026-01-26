@@ -289,10 +289,12 @@ export default function TieringView({ vendor, updateVendor }) {
           <div style={{ minWidth: 280 }}>
             <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Tier (auto + override)</div>
             <div style={{ display: "grid", gap: 8 }}>
-              <div style={{ fontSize: 13, opacity: 0.9 }}>
-                Suggested: <strong>{suggested.tier}</strong> — {suggested.label}
-              </div>
-
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+  <div style={{ fontSize: 13, opacity: 0.9 }}>
+    Suggested: <strong>{suggested.tier}</strong> — {suggested.label}
+  </div>
+  <TierBadge tier={effectiveTier} />
+</div>
               <select
                 className="input"
                 value={tierOverride}
