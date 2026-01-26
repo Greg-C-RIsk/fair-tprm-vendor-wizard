@@ -157,30 +157,6 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView, sel
 }
   };
 
-  const Field = ({ label, value, onChange, placeholder, textarea }) => {
-    return (
-      <div style={{ display: "grid", gap: 6 }}>
-        <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>{label}</div>
-        {textarea ? (
-          <textarea
-            className="textarea"
-            value={value}
-            placeholder={placeholder}
-            rows={4}
-            onChange={(e) => onChange(e.target.value)}
-          />
-        ) : (
-          <input
-            className="input"
-            value={value}
-            placeholder={placeholder}
-            onChange={(e) => onChange(e.target.value)}
-          />
-        )}
-      </div>
-    );
-  };
-
   return (
     <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 14, alignItems: "start" }}>
       {/* Left: scenario list */}
