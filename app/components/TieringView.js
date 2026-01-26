@@ -348,6 +348,9 @@ export default function TieringView({ vendor, updateVendor }) {
               onChange={(v) => patchFactor("businessCriticality", v)}
             />
           </div>
+
+                <Divider />
+<ScoreLegendTable />
         </Card>
 
         <Card>
