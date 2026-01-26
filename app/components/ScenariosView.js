@@ -155,7 +155,13 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView, sel
             return (
               <button
                 key={s.id}
-                onClick={() => setActiveScenarioId(s.id)}
+                onClick={() => {
+  setActiveScenarioId(s.id);
+  // Ne sélectionne globalement que si le scénario existe déjà dans vendor.scenarios
+  if (typeof selectScenario === "function" && vendorScenarios.some((x) => x.id === s.id)) {
+    selectScenario(s.id);
+  }
+}}
                 style={{
                   textAlign: "left",
                   border: "1px solid rgba(255,255,255,0.12)",
