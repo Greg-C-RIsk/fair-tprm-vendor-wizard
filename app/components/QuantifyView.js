@@ -220,8 +220,8 @@ export default function QuantifyView({ vendor, scenario, updateVendor }) {
         base.level === "TEF"
           ? { ...base, susceptibilityMode: "Direct" }
           : base.level === "Contact Frequency"
-          ? { ...base, susceptibilityMode: "Derived" }
-          : base;
+? { ...base, susceptibilityMode: "FromCapacityVsResistance" }
+: base;
 
       const out = runFairMonteCarlo(tuned);
       const merged = ensureQuant({ ...tuned, ...out });
