@@ -3,6 +3,30 @@
 import { useEffect, useMemo, useState } from "react";
 import { emptyScenario, uid } from "../../lib/model";
 
+function Field({ label, value, onChange, placeholder, textarea }) {
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>{label}</div>
+      {textarea ? (
+        <textarea
+          className="textarea"
+          value={value}
+          placeholder={placeholder}
+          rows={4}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      ) : (
+        <input
+          className="input"
+          value={value}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function ScenariosView({ vendor, updateVendor, setActiveView, selectScenario }) {
   const vendorScenarios = useMemo(() => {
     return Array.isArray(vendor?.scenarios) ? vendor.scenarios : [];
