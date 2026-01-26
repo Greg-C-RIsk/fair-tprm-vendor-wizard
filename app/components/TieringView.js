@@ -77,6 +77,97 @@ function Card({ children, style }) {
   );
 }
 
+function Divider() {
+  return <div style={{ height: 1, background: "rgba(255,255,255,0.10)", margin: "12px 0" }} />;
+}
+
+function TierBadge({ tier }) {
+  // simple colors by tier
+  const t = String(tier || "").trim();
+
+  const styleByTier =
+    t === "Tier 1"
+      ? { background: "rgba(239,68,68,0.18)", border: "1px solid rgba(239,68,68,0.35)" } // red
+      : t === "Tier 2"
+      ? { background: "rgba(245,158,11,0.18)", border: "1px solid rgba(245,158,11,0.35)" } // amber
+      : { background: "rgba(34,197,94,0.18)", border: "1px solid rgba(34,197,94,0.35)" }; // green (Tier 3 default)
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "6px 10px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 900,
+        ...styleByTier,
+      }}
+    >
+      {t || "Tier —"}
+    </span>
+  );
+}
+
+function ScoreLegendTable() {
+  const rows = [
+    { s: 1, label: "Very low", example: "Minimal exposure / limited impact" },
+    { s: 2, label: "Low", example: "Low exposure, small scope" },
+    { s: 3, label: "Medium", example: "Moderate exposure or impact" },
+    { s: 4, label: "High", example: "Significant exposure or impact" },
+    { s: 5, label: "Very high", example: "Critical exposure, broad impact" },
+  ];
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900, marginBottom: 8 }}>
+        Score → interpretation
+      </div>
+
+      <div
+        style={{
+          border: "1px solid rgba(255,255,255,0.10)",
+          borderRadius: 12,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "70px 140px 1fr",
+            padding: "10px 12px",
+            background: "rgba(255,255,255,0.06)",
+            fontSize: 12,
+            fontWeight: 900,
+          }}
+        >
+          <div>Score</div>
+          <div>Meaning</div>
+          <div>Example</div>
+        </div>
+
+        {rows.map((r) => (
+          <div
+            key={r.s}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "70px 140px 1fr",
+              padding: "10px 12px",
+              borderTop: "1px solid rgba(255,255,255,0.08)",
+              fontSize: 12,
+              opacity: 0.92,
+            }}
+          >
+            <div style={{ fontWeight: 900 }}>{r.s}</div>
+            <div>{r.label}</div>
+            <div style={{ opacity: 0.85 }}>{r.example}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function FactorRow({ k, value, onChange }) {
   return (
     <div
