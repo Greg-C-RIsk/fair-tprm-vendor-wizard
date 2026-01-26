@@ -7,6 +7,12 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView, sel
   const vendorScenarios = useMemo(() => {
     return Array.isArray(vendor?.scenarios) ? vendor.scenarios : [];
   }, [vendor]);
+    // Signature stable (ids) pour éviter de re-hydrater pendant la saisie
+  const vendorScenarioIdsSig = useMemo(() => {
+    return (Array.isArray(vendorScenarios) ? vendorScenarios : [])
+      .map((s) => s.id)
+      .join("|");
+  }, [vendorScenarios]);
 
   // Local working copy (edits live here until Save)
   const [localScenarios, setLocalScenarios] = useState([]);
