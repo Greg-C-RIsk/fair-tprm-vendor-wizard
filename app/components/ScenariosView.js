@@ -97,12 +97,16 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView, sel
   };
 
   const saveChanges = () => {
-    // Commit to vendor (and your page.js will persist to localStorage)
-    updateVendor(vendor.id, { scenarios: localScenarios });
-    setIsDirty(false);
-    setJustSaved(true);
-    setTimeout(() => setJustSaved(false), 1500);
-  };
+  updateVendor(vendor.id, { scenarios: localScenarios });
+
+  if (typeof selectScenario === "function" && activeScenarioId) {
+    selectScenario(activeScenarioId);
+  }
+
+  setIsDirty(false);
+  setJustSaved(true);
+  setTimeout(() => setJustSaved(false), 1500);
+};
 
   const cancelChanges = () => {
     // Revert local edits
