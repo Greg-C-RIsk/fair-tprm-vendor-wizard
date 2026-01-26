@@ -20,19 +20,24 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView, sel
   const [isDirty, setIsDirty] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
 
-  // When vendor changes, re-hydrate local copy (reset dirty)
+    // When vendor changes, re-hydrate local copy (reset dirty)
+  // IMPORTANT: ne se relance que si la liste des scénarios change vraiment (ids)
   useEffect(() => {
-    setLocalScenarios(vendorScenarios);
+    // clone => évite les références partagées qui peuvent provoquer des resets
+    const cloned = JSON.parse(JSON.stringify(vendorScenarios));
+
+    setLocalScenarios(cloned);
     setIsDirty(false);
     setJustSaved(false);
 
-    if (!vendorScenarios.length) {
-      setActiveScenarioId("");
-    } else if (!activeScenarioId || !vendorScenarios.some((s) => s.id === activeScenarioId)) {
-      setActiveScenarioId(vendorScenarios[0].id);
-    }
+    setActiveScenarioId((prev) => {
+      if (!cloned.length) return "";
+      if (prev && cloned.some((s) => s.id === prev)) return prev;
+      return cloned[0].id;
+    });
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vendor?.id, vendorScenarios.length]);
+  }, [vendor?.id, vendorScenarioIdsSig]);
 
   // Keep selection valid even as local list changes
   useEffect(() => {
