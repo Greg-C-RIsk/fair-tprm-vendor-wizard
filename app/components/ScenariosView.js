@@ -116,6 +116,10 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView, sel
 
     if (vendorScenarios.length) setActiveScenarioId(vendorScenarios[0].id);
     else setActiveScenarioId("");
+    
+    if (typeof selectScenario === "function" && vendorScenarios.length) {
+  selectScenario(vendorScenarios[0].id);
+}
   };
 
   const Field = ({ label, value, onChange, placeholder, textarea }) => {
