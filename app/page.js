@@ -830,7 +830,12 @@ export default function Page() {
           ) : activeView === "Decisions" ? (
             <DecisionsView vendor={selectedVendor} scenario={selectedScenario} />
           ) : activeView === "Dashboard" ? (
-            <DashboardView vendors={vendors} />
+            <DashboardView
+  vendors={vendors}
+  setActiveView={setActiveView}
+  selectVendor={selectVendor}
+  selectScenario={selectScenario}
+/>
           ) : (
             <Card>
               <div style={{ fontSize: 18, fontWeight: 900 }}>Unknown view</div>
