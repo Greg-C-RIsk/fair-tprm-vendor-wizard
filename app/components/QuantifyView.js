@@ -244,9 +244,132 @@ export default function QuantifyView({ vendor, scenario, updateVendor }) {
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
-        <FrequencyPanel />
-        <MagnitudePanel />
+  {/* FrequencyPanel (inline) */}
+  <Card>
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+      <div>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>Frequency inputs</div>
+        <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>
+          Abstraction level controls which inputs you should provide.
+        </div>
       </div>
+
+      <div style={{ minWidth: 220 }}>
+        <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Abstraction level</div>
+        <select
+          className="input"
+          value={q.level || "LEF"}
+          onChange={(e) => patch({ level: e.target.value })}
+        >
+          <option value="LEF">LEF</option>
+          <option value="TEF">TEF</option>
+          <option value="Contact Frequency">Contact Frequency</option>
+        </select>
+      </div>
+    </div>
+
+    <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+      {level === "LEF" ? (
+        <Triad
+          title="LEF (Loss Event Frequency)"
+          value={q.lef}
+          onChange={(v) => patch({ lef: v })}
+          placeholderMin="min / yr"
+          placeholderMl="ml / yr"
+          placeholderMax="max / yr"
+        />
+      ) : null}
+
+      {level === "TEF" ? (
+        <>
+          <Triad
+            title="TEF (Threat Event Frequency)"
+            value={q.tef}
+            onChange={(v) => patch({ tef: v })}
+            placeholderMin="min / yr"
+            placeholderMl="ml / yr"
+            placeholderMax="max / yr"
+          />
+          <Triad
+            title="Susceptibility (0 → 1)"
+            value={q.susceptibility}
+            onChange={(v) => patch({ susceptibility: v })}
+            placeholderMin="min"
+            placeholderMl="ml"
+            placeholderMax="max"
+          />
+        </>
+      ) : null}
+
+      {level === "Contact Frequency" ? (
+        <>
+          <Triad
+            title="Contact Frequency"
+            value={q.contactFrequency}
+            onChange={(v) => patch({ contactFrequency: v })}
+            placeholderMin="min / yr"
+            placeholderMl="ml / yr"
+            placeholderMax="max / yr"
+          />
+          <Triad
+            title="Probability of Action (0 → 1)"
+            value={q.probabilityOfAction}
+            onChange={(v) => patch({ probabilityOfAction: v })}
+            placeholderMin="min"
+            placeholderMl="ml"
+            placeholderMax="max"
+          />
+          <Triad
+            title="Threat Capacity"
+            value={q.threatCapacity}
+            onChange={(v) => patch({ threatCapacity: v })}
+          />
+          <Triad
+            title="Resistance Strength"
+            value={q.resistanceStrength}
+            onChange={(v) => patch({ resistanceStrength: v })}
+          />
+        </>
+      ) : null}
+
+      <div style={{ marginTop: 4, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
+        <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Calculated (ML guidance)</div>
+        <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9, display: "grid", gap: 4 }}>
+          {level !== "LEF" ? <div>TEF (ML): {tefML === null ? "—" : tefML.toFixed(2)}</div> : null}
+          {level !== "LEF" ? (
+            <div>Susceptibility (ML): {suscML === null ? "—" : suscML.toFixed(3)}</div>
+          ) : null}
+          <div>LEF (ML): {lefML === null ? "—" : lefML.toFixed(2)}</div>
+          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+            FAIR formulas used: TEF = CF × PoA ; LEF = TEF × Susceptibility ; Susceptibility ≈ P(TC &gt; RS).
+          </div>
+        </div>
+      </div>
+    </div>
+  </Card>
+
+  {/* MagnitudePanel (inline) */}
+  <Card>
+    <div style={{ fontSize: 16, fontWeight: 950 }}>Magnitude inputs</div>
+    <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>
+      Always required (non-contextual).
+    </div>
+
+    <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+      <Triad title="Primary Loss" value={q.primaryLoss} onChange={(v) => patch({ primaryLoss: v })} />
+      <Triad
+        title="Secondary Loss Event Frequency"
+        value={q.secondaryLossEventFrequency}
+        onChange={(v) => patch({ secondaryLossEventFrequency: v })}
+      />
+      <Triad
+        title="Secondary Loss Magnitude"
+        value={q.secondaryLossMagnitude}
+        onChange={(v) => patch({ secondaryLossMagnitude: v })}
+      />
+    </div>
+  </Card>
+</div>
 
       {/* Actions */}
       <Card>
