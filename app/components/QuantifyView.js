@@ -1,302 +1,425 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { emptyQuant } from "../../lib/model";
+import { ensureQuant, runFairMonteCarlo } from "../../lib/fairEngine";
 
-function CardBlock({ title, subtitle, children }) {
+function toNum(x) {
+  if (x === null || x === undefined) return null;
+  const n = Number(String(x).replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+function clamp01(x) {
+  if (!Number.isFinite(x)) return 0;
+  if (x < 0) return 0;
+  if (x > 1) return 1;
+  return x;
+}
+
+function triangularSample(min, ml, max) {
+  const a = toNum(min);
+  const c = toNum(ml);
+  const b = toNum(max);
+  if (a === null || b === null || c === null) return null;
+  if (!(a <= c && c <= b)) return null;
+  if (a === b) return a;
+
+  const u = Math.random();
+  const fc = (c - a) / (b - a);
+  if (u < fc) return a + Math.sqrt(u * (b - a) * (c - a));
+  return b - Math.sqrt((1 - u) * (b - a) * (b - c));
+}
+
+// FAIR-ish: Susceptibility = P(Threat Capability > Resistance Strength)
+function estimateSusceptibility(tc, rs, n = 3000) {
+  const a = toNum(tc?.min), c = toNum(tc?.ml), b = toNum(tc?.max);
+  const d = toNum(rs?.min), f = toNum(rs?.ml), e = toNum(rs?.max);
+  if ([a, b, c, d, e, f].some((x) => x === null)) return null;
+
+  let wins = 0;
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const tcs = triangularSample(a, c, b);
+    const rss = triangularSample(d, f, e);
+    if (tcs === null || rss === null) continue;
+    total++;
+    if (tcs > rss) wins++;
+  }
+  if (!total) return null;
+  return wins / total;
+}
+
+function Card({ children }) {
   return (
     <div
+      className="card"
       style={{
         border: "1px solid rgba(255,255,255,0.12)",
-        background: "rgba(255,255,255,0.04)",
-        borderRadius: 14,
-        padding: 14,
+        background: "rgba(0,0,0,0.18)",
+        borderRadius: 16,
+        padding: 16,
       }}
     >
-      <div style={{ display: "grid", gap: 4, marginBottom: 10 }}>
-        <div style={{ fontWeight: 900 }}>{title}</div>
-        {subtitle ? <div style={{ fontSize: 12, opacity: 0.75 }}>{subtitle}</div> : null}
-      </div>
       {children}
     </div>
   );
 }
 
-function RangeRow({ label, value, onChange, help }) {
-  const v = value || { min: "", ml: "", max: "" };
-
+function Triad({ title, value, onChange, placeholderMin, placeholderMl, placeholderMax }) {
   return (
     <div style={{ display: "grid", gap: 6 }}>
-      <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>{label}</div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+      <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 800 }}>{title}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
         <input
           className="input"
-          placeholder="min"
-          value={v.min ?? ""}
-          onChange={(e) => onChange({ ...v, min: e.target.value })}
+          value={value?.min ?? ""}
+          placeholder={placeholderMin || "min"}
+          onChange={(e) => onChange({ ...value, min: e.target.value })}
         />
         <input
           className="input"
-          placeholder="most likely"
-          value={v.ml ?? ""}
-          onChange={(e) => onChange({ ...v, ml: e.target.value })}
+          value={value?.ml ?? ""}
+          placeholder={placeholderMl || "most likely"}
+          onChange={(e) => onChange({ ...value, ml: e.target.value })}
         />
         <input
           className="input"
-          placeholder="max"
-          value={v.max ?? ""}
-          onChange={(e) => onChange({ ...v, max: e.target.value })}
+          value={value?.max ?? ""}
+          placeholder={placeholderMax || "max"}
+          onChange={(e) => onChange({ ...value, max: e.target.value })}
         />
       </div>
-
-      {help ? <div style={{ fontSize: 11, opacity: 0.65 }}>{help}</div> : null}
     </div>
   );
 }
 
-export default function QuantifyView({ vendor, scenario, updateVendor, setActiveView }) {
-  const scenarioId = scenario?.id || "";
+function StatBlock({ stats }) {
+  if (!stats?.ale || !stats?.pel) return null;
 
-  // local copy (edit here, save writes to global state)
-  const [localQuant, setLocalQuant] = useState(emptyQuant());
+  const fmt = (x) => {
+    if (!Number.isFinite(x)) return "—";
+    // format simple
+    return Math.round(x).toLocaleString();
+  };
+
+  return (
+    <Card>
+      <div style={{ fontSize: 16, fontWeight: 950 }}>Simulation results</div>
+      <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ border: "1px solid rgba(255,255,255,0.10)", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontWeight: 900 }}>ALE (Annualized Loss Exposure)</div>
+          <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9, display: "grid", gap: 4 }}>
+            <div>p10: {fmt(stats.ale.p10)}</div>
+            <div>p50: {fmt(stats.ale.ml)}</div>
+            <div>p90: {fmt(stats.ale.p90)}</div>
+            <div>~min (p01): {fmt(stats.ale.min)}</div>
+            <div>~max (p99): {fmt(stats.ale.max)}</div>
+          </div>
+        </div>
+
+        <div style={{ border: "1px solid rgba(255,255,255,0.10)", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontWeight: 900 }}>P(Loss Event) (per-event loss)</div>
+          <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9, display: "grid", gap: 4 }}>
+            <div>p10: {fmt(stats.pel.p10)}</div>
+            <div>p50: {fmt(stats.pel.ml)}</div>
+            <div>p90: {fmt(stats.pel.p90)}</div>
+            <div>~min (p01): {fmt(stats.pel.min)}</div>
+            <div>~max (p99): {fmt(stats.pel.max)}</div>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+export default function QuantifyView({ vendor, scenario, updateVendor }) {
+  if (!vendor) {
+    return (
+      <Card>
+        <div style={{ fontSize: 18, fontWeight: 950 }}>Quantify</div>
+        <div style={{ marginTop: 8, opacity: 0.8 }}>No vendor selected.</div>
+      </Card>
+    );
+  }
+
+  if (!scenario) {
+    return (
+      <Card>
+        <div style={{ fontSize: 18, fontWeight: 950 }}>Quantify</div>
+        <div style={{ marginTop: 8, opacity: 0.8 }}>No scenario selected.</div>
+      </Card>
+    );
+  }
+
+  const [q, setQ] = useState(() => ensureQuant(scenario.quant || {}));
   const [isDirty, setIsDirty] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [running, setRunning] = useState(false);
 
   useEffect(() => {
-    const q = scenario?.quant && typeof scenario.quant === "object" ? scenario.quant : emptyQuant();
-    setLocalQuant({ ...emptyQuant(), ...q });
+    setQ(ensureQuant(scenario.quant || {}));
     setIsDirty(false);
     setJustSaved(false);
-  }, [scenarioId]);
+  }, [scenario.id]); // important: change scenario => reset local state
 
-  const markDirty = () => {
+  const level = q.level || "LEF";
+
+  // Derived (ML) values for on-screen guidance
+  const tefML = useMemo(() => {
+    if (level === "TEF") return toNum(q.tef?.ml);
+    if (level === "Contact Frequency") {
+      const cf = toNum(q.contactFrequency?.ml);
+      const poa = toNum(q.probabilityOfAction?.ml);
+      if (cf === null || poa === null) return null;
+      return cf * poa;
+    }
+    return null;
+  }, [level, q.tef, q.contactFrequency, q.probabilityOfAction]);
+
+  const suscML = useMemo(() => {
+    if (level === "TEF") {
+      const s = toNum(q.susceptibility?.ml);
+      return s === null ? null : clamp01(s);
+    }
+    if (level === "Contact Frequency") {
+      const est = estimateSusceptibility(q.threatCapacity, q.resistanceStrength, 2500);
+      return est === null ? null : clamp01(est);
+    }
+    return null;
+  }, [level, q.susceptibility, q.threatCapacity, q.resistanceStrength]);
+
+  const lefML = useMemo(() => {
+    if (level === "LEF") return toNum(q.lef?.ml);
+    if (tefML === null || suscML === null) return null;
+    return tefML * suscML;
+  }, [level, q.lef, tefML, suscML]);
+
+  const patch = (p) => {
+    setQ((prev) => ensureQuant({ ...prev, ...p }));
     setIsDirty(true);
     setJustSaved(false);
   };
 
-  const patchQuant = (patch) => {
-    setLocalQuant((p) => ({ ...p, ...patch }));
-    markDirty();
-  };
-
   const save = () => {
-    if (!vendor || !scenario || !updateVendor) return;
-
-    const nextScenarios = (Array.isArray(vendor.scenarios) ? vendor.scenarios : []).map((s) =>
-      s.id === scenario.id ? { ...s, quant: localQuant } : s
+    const nextScenarios = (vendor.scenarios || []).map((s) =>
+      s.id === scenario.id ? { ...s, quant: ensureQuant(q) } : s
     );
-
     updateVendor(vendor.id, { scenarios: nextScenarios });
     setIsDirty(false);
     setJustSaved(true);
     setTimeout(() => setJustSaved(false), 1200);
   };
 
-  const cancel = () => {
-    const q = scenario?.quant && typeof scenario.quant === "object" ? scenario.quant : emptyQuant();
-    setLocalQuant({ ...emptyQuant(), ...q });
-    setIsDirty(false);
-    setJustSaved(false);
+  const run = async () => {
+    setRunning(true);
+    try {
+      const base = ensureQuant(q);
+
+      // set mode automatically to match your UX:
+      const tuned =
+        base.level === "TEF"
+          ? { ...base, susceptibilityMode: "Direct" }
+          : base.level === "Contact Frequency"
+          ? { ...base, susceptibilityMode: "Derived" }
+          : base;
+
+      const out = runFairMonteCarlo(tuned);
+      const merged = ensureQuant({ ...tuned, ...out });
+
+      setQ(merged);
+      setIsDirty(false);
+
+      // Persist immediately so Results/Dashboard see it
+      const nextScenarios = (vendor.scenarios || []).map((s) =>
+        s.id === scenario.id ? { ...s, quant: merged } : s
+      );
+      updateVendor(vendor.id, { scenarios: nextScenarios });
+    } finally {
+      setRunning(false);
+    }
   };
 
-  if (!vendor || !scenario) {
+  // Contextual left panel fields
+  const FrequencyPanel = () => {
     return (
-      <div className="card card-pad">
-        <h2>Quantify</h2>
-        <div style={{ marginTop: 8, opacity: 0.8 }}>
-          Sélectionne d’abord un vendor et un scénario.
-        </div>
-        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="btn" onClick={() => setActiveView?.("Vendors")}>Go Vendors</button>
-          <button className="btn" onClick={() => setActiveView?.("Scenarios")}>Go Scenarios</button>
-        </div>
-      </div>
-    );
-  }
-
-  // --- Contextuel : FREQUENCE (colonne gauche)
-  const level = localQuant.level || "LEF";
-
-  const renderFrequencyLeft = () => {
-    if (level === "LEF") {
-      return (
-        <CardBlock
-          title="Frequency (LEF)"
-          subtitle="Renseigne uniquement la Loss Event Frequency (min / ML / max)."
-        >
-          <RangeRow
-            label="Loss Event Frequency (LEF)"
-            value={localQuant.lef}
-            onChange={(v) => patchQuant({ lef: v })}
-          />
-        </CardBlock>
-      );
-    }
-
-    if (level === "TEF") {
-      return (
-        <CardBlock
-          title="Frequency (TEF)"
-          subtitle="Renseigne Threat Event Frequency et Vulnerability (min / ML / max)."
-        >
-          <div style={{ display: "grid", gap: 14 }}>
-            <RangeRow
-              label="Threat Event Frequency (TEF)"
-              value={localQuant.tef}
-              onChange={(v) => patchQuant({ tef: v })}
-            />
-            <RangeRow
-              label="Vulnerability (Susceptibility)"
-              value={localQuant.susceptibility}
-              onChange={(v) => patchQuant({ susceptibility: v })}
-              help="(On garde Susceptibility comme proxy de Vulnerability pour ton modèle.)"
-            />
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 950 }}>Frequency inputs</div>
+            <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>
+              Abstraction level controls which inputs you should provide.
+            </div>
           </div>
-        </CardBlock>
-      );
-    }
 
-    // Contact Frequency
-    return (
-      <CardBlock
-        title="Frequency (Contact Frequency)"
-        subtitle="Renseigne Contact Frequency, Probability of Action, Threat Capacity, Resistance Strength."
-      >
-        <div style={{ display: "grid", gap: 14 }}>
-          <RangeRow
-            label="Contact Frequency"
-            value={localQuant.contactFrequency}
-            onChange={(v) => patchQuant({ contactFrequency: v })}
-          />
-          <RangeRow
-            label="Probability of Action"
-            value={localQuant.probabilityOfAction}
-            onChange={(v) => patchQuant({ probabilityOfAction: v })}
-          />
-          <RangeRow
-            label="Threat Capacity"
-            value={localQuant.threatCapacity}
-            onChange={(v) => patchQuant({ threatCapacity: v })}
-          />
-          <RangeRow
-            label="Resistance Strength"
-            value={localQuant.resistanceStrength}
-            onChange={(v) => patchQuant({ resistanceStrength: v })}
-          />
+          <div style={{ minWidth: 220 }}>
+            <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Abstraction level</div>
+            <select
+              className="input"
+              value={q.level || "LEF"}
+              onChange={(e) => patch({ level: e.target.value })}
+            >
+              <option value="LEF">LEF</option>
+              <option value="TEF">TEF</option>
+              <option value="Contact Frequency">Contact Frequency</option>
+            </select>
+          </div>
         </div>
-      </CardBlock>
+
+        <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+          {level === "LEF" ? (
+            <Triad
+              title="LEF (Loss Event Frequency)"
+              value={q.lef}
+              onChange={(v) => patch({ lef: v })}
+              placeholderMin="min / yr"
+              placeholderMl="ml / yr"
+              placeholderMax="max / yr"
+            />
+          ) : null}
+
+          {level === "TEF" ? (
+            <>
+              <Triad
+                title="TEF (Threat Event Frequency)"
+                value={q.tef}
+                onChange={(v) => patch({ tef: v })}
+                placeholderMin="min / yr"
+                placeholderMl="ml / yr"
+                placeholderMax="max / yr"
+              />
+              <Triad
+                title="Susceptibility (0 → 1)"
+                value={q.susceptibility}
+                onChange={(v) => patch({ susceptibility: v })}
+                placeholderMin="min"
+                placeholderMl="ml"
+                placeholderMax="max"
+              />
+            </>
+          ) : null}
+
+          {level === "Contact Frequency" ? (
+            <>
+              <Triad
+                title="Contact Frequency"
+                value={q.contactFrequency}
+                onChange={(v) => patch({ contactFrequency: v })}
+                placeholderMin="min / yr"
+                placeholderMl="ml / yr"
+                placeholderMax="max / yr"
+              />
+              <Triad
+                title="Probability of Action (0 → 1)"
+                value={q.probabilityOfAction}
+                onChange={(v) => patch({ probabilityOfAction: v })}
+                placeholderMin="min"
+                placeholderMl="ml"
+                placeholderMax="max"
+              />
+              <Triad
+                title="Threat Capacity"
+                value={q.threatCapacity}
+                onChange={(v) => patch({ threatCapacity: v })}
+              />
+              <Triad
+                title="Resistance Strength"
+                value={q.resistanceStrength}
+                onChange={(v) => patch({ resistanceStrength: v })}
+              />
+            </>
+          ) : null}
+
+          {/* Derived guidance */}
+          <div style={{ marginTop: 4, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 12 }}>
+            <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Calculated (ML guidance)</div>
+            <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9, display: "grid", gap: 4 }}>
+              {level !== "LEF" ? <div>TEF (ML): {tefML === null ? "—" : tefML.toFixed(2)}</div> : null}
+              {level !== "LEF" ? (
+                <div>Susceptibility (ML): {suscML === null ? "—" : suscML.toFixed(3)}</div>
+              ) : null}
+              <div>LEF (ML): {lefML === null ? "—" : lefML.toFixed(2)}</div>
+              <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                FAIR formulas used: TEF = CF × PoA ; LEF = TEF × Susceptibility ; Susceptibility ≈ P(TC &gt; RS).
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
     );
   };
 
-  // --- Toujours visible : MAGNITUDE (colonne droite)
-  const renderLossRight = () => {
+  const MagnitudePanel = () => {
     return (
-      <CardBlock
-        title="Magnitude (Loss)"
-        subtitle="Toujours visible : Primary Loss + Secondary Loss (Frequency + Magnitude)."
-      >
-        <div style={{ display: "grid", gap: 14 }}>
-          <RangeRow
-            label="Primary Loss"
-            value={localQuant.primaryLoss}
-            onChange={(v) => patchQuant({ primaryLoss: v })}
+      <Card>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>Magnitude inputs</div>
+        <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>
+          Always required (non-contextual).
+        </div>
+
+        <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+          <Triad
+            title="Primary Loss"
+            value={q.primaryLoss}
+            onChange={(v) => patch({ primaryLoss: v })}
           />
-          <RangeRow
-            label="Secondary Loss Event Frequency"
-            value={localQuant.secondaryLossEventFrequency}
-            onChange={(v) => patchQuant({ secondaryLossEventFrequency: v })}
+          <Triad
+            title="Secondary Loss Event Frequency"
+            value={q.secondaryLossEventFrequency}
+            onChange={(v) => patch({ secondaryLossEventFrequency: v })}
           />
-          <RangeRow
-            label="Secondary Loss Magnitude"
-            value={localQuant.secondaryLossMagnitude}
-            onChange={(v) => patchQuant({ secondaryLossMagnitude: v })}
+          <Triad
+            title="Secondary Loss Magnitude"
+            value={q.secondaryLossMagnitude}
+            onChange={(v) => patch({ secondaryLossMagnitude: v })}
           />
         </div>
-      </CardBlock>
+      </Card>
     );
   };
 
   return (
-    <div className="card card-pad">
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <h2 style={{ margin: 0 }}>Quantify</h2>
-          <div style={{ marginTop: 6, opacity: 0.8 }}>
-            Vendor: <strong>{vendor.name?.trim() ? vendor.name : "(Unnamed)"}</strong> • Scenario:{" "}
-            <strong>{scenario.title?.trim() ? scenario.title : "(Untitled)"}</strong>
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
+        <FrequencyPanel />
+        <MagnitudePanel />
+      </div>
+
+      {/* Actions */}
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <button className="btn primary" onClick={save} disabled={!isDirty}>
+              Save
+            </button>
+            <button className="btn" onClick={run} disabled={running}>
+              {running ? "Running…" : "Run simulation (FAIR)"}
+            </button>
+
+            {justSaved ? (
+              <div style={{ fontSize: 12, opacity: 0.85 }}>Saved ✅</div>
+            ) : isDirty ? (
+              <div style={{ fontSize: 12, opacity: 0.75 }}>Unsaved changes</div>
+            ) : null}
           </div>
-          <div style={{ marginTop: 6, opacity: 0.75, fontSize: 13 }}>
-            Édite → <strong>Save</strong> → Results.
-          </div>
-        </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <button className="btn" onClick={() => setActiveView?.("Scenarios")}>← Back to Scenarios</button>
-          <button className="btn" onClick={() => setActiveView?.("Results")}>Go to Results →</button>
-        </div>
-      </div>
-
-      {/* Save/Cancel */}
-      <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <button className="btn primary" onClick={save} disabled={!isDirty}>
-          Save
-        </button>
-        <button className="btn" onClick={cancel} disabled={!isDirty}>
-          Cancel
-        </button>
-        {justSaved ? (
-          <div style={{ fontSize: 12, opacity: 0.85 }}>Saved ✅</div>
-        ) : isDirty ? (
-          <div style={{ fontSize: 12, opacity: 0.75 }}>Unsaved changes</div>
-        ) : null}
-      </div>
-
-      {/* Abstraction level */}
-      <div style={{ marginTop: 16, maxWidth: 420 }}>
-        <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>Abstraction level</div>
-        <select
-          className="input"
-          value={level}
-          onChange={(e) => patchQuant({ level: e.target.value })}
-        >
-          <option value="LEF">LEF</option>
-          <option value="TEF">TEF</option>
-          <option value="Contact Frequency">Contact Frequency</option>
-        </select>
-      </div>
-
-      {/* Two-column layout: Frequency (left) / Magnitude (right) */}
-      <div
-        style={{
-          marginTop: 14,
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 14,
-          alignItems: "start",
-        }}
-      >
-        <div style={{ display: "grid", gap: 14 }}>
-          {renderFrequencyLeft()}
-
-          <CardBlock title="Simulation" subtitle="Optionnel (tu peux laisser 10000).">
-            <div style={{ display: "grid", gap: 6, maxWidth: 240 }}>
-              <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>Simulations</div>
-              <input
-                className="input"
-                value={localQuant.sims ?? 10000}
-                onChange={(e) => patchQuant({ sims: e.target.value })}
-                placeholder="10000"
-              />
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ fontSize: 12, opacity: 0.75 }}>Simulations</div>
+            <input
+              className="input"
+              style={{ width: 120 }}
+              value={q.sims ?? 10000}
+              onChange={(e) => patch({ sims: e.target.value })}
+              placeholder="10000"
+            />
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              {q.lastRunAt ? `Last run: ${new Date(q.lastRunAt).toLocaleString()}` : ""}
             </div>
-          </CardBlock>
+          </div>
         </div>
+      </Card>
 
-        <div style={{ display: "grid", gap: 14 }}>
-          {renderLossRight()}
-        </div>
-      </div>
+      {/* Results preview */}
+      {q.stats ? <StatBlock stats={q.stats} /> : null}
     </div>
   );
 }
