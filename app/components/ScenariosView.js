@@ -217,9 +217,22 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView, sel
               </div>
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button className="btn" onClick={() => setActiveView?.("Quantify")}>
-                  Go to Quantify →
-                </button>
+                <button
+  className="btn"
+  onClick={() => {
+    if (!activeScenario) return;
+
+    if (isDirty) {
+      saveChanges(); // ça va aussi faire selectScenario(activeScenarioId)
+    } else if (typeof selectScenario === "function") {
+      selectScenario(activeScenario.id);
+    }
+
+    setActiveView?.("Quantify");
+  }}
+>
+  Go to Quantify →
+</button>
                 <button className="btn" onClick={() => deleteScenario(activeScenario.id)}>
                   Delete
                 </button>
