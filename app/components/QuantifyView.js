@@ -223,7 +223,7 @@ export default function QuantifyView({ vendor, scenario, updateVendor }) {
 ? { ...base, susceptibilityMode: "FromCapacityVsResistance" }
 : base;
 
-      const out = runFairMonteCarlo(tuned);
+      const out = await runFairMonteCarlo(tuned);
       const merged = ensureQuant({ ...tuned, ...out });
 
       setQ(merged);
