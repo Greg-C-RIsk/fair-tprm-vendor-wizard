@@ -1,17 +1,15 @@
 "use client";
 
-import { useMemo, useState, useRef } from "react";
+import { useMemo, useState } from "react";
+import { ensureQuant, runFairMonteCarlo } from "../../lib/fairEngine";
 
 /*
-ResultsView — FAIR Engine + Monte Carlo
-- Reads scenario.quant only
-- No mutation of quant inputs
-- Writes results into scenario.results
+ResultsView
+- Uses the SAME FAIR engine as Quantify (runFairMonteCarlo)
+- Displays quant.stats + distributions if present
+- Can run simulation from here and persist results into scenario.quant
+- Auto-fixes % scale if user typed 0..1 instead of 0..100 (PoA + Susceptibility in Direct mode)
 */
-
-// ------------------ Helpers ------------------
-
-const clamp01 = (x) => Math.max(0, Math.min(1, x));
 
 const money = (n) => {
   if (!Number.isFinite(n)) return "–";
@@ -22,41 +20,26 @@ const money = (n) => {
   }).format(n);
 };
 
-const triangularSample = (min, ml, max) => {
-  const a = Number(min);
-  const c = Number(ml);
-  const b = Number(max);
-  if (![a, b, c].every(Number.isFinite)) return 0;
-  if (b <= a) return a;
-  const u = Math.random();
-  const fc = (c - a) / (b - a);
-  return u < fc
-    ? a + Math.sqrt(u * (b - a) * (c - a))
-    : b - Math.sqrt((1 - u) * (b - a) * (b - c));
-};
+// If triad looks like 0..1, convert to 0..100 (percent)
+function maybeConvert01toPercent(triad) {
+  const a = Number(String(triad?.min ?? "").replace(",", "."));
+  const m = Number(String(triad?.ml ?? "").replace(",", "."));
+  const b = Number(String(triad?.max ?? "").replace(",", "."));
 
-// Poisson (Knuth)
-const poisson = (lambda) => {
-  const L = Math.exp(-lambda);
-  let k = 0;
-  let p = 1;
-  do {
-    k++;
-    p *= Math.random();
-  } while (p > L);
-  return k - 1;
-};
+  const vals = [a, m, b].filter((x) => Number.isFinite(x));
+  if (!vals.length) return triad;
 
-const quantile = (arr, q) => {
-  if (!arr.length) return 0;
-  const a = [...arr].sort((x, y) => x - y);
-  const pos = (a.length - 1) * q;
-  const base = Math.floor(pos);
-  const rest = pos - base;
-  return a[base + 1] !== undefined
-    ? a[base] + rest * (a[base + 1] - a[base])
-    : a[base];
-};
+  // Heuristic: if all provided values are between 0 and 1, treat as fraction and convert to %
+  const allBetween01 = vals.every((x) => x >= 0 && x <= 1);
+  if (!allBetween01) return triad;
+
+  return {
+    ...triad,
+    min: triad?.min === "" ? "" : String(a * 100),
+    ml: triad?.ml === "" ? "" : String(m * 100),
+    max: triad?.max === "" ? "" : String(b * 100),
+  };
+}
 
 // ------------------ Charts ------------------
 
@@ -69,10 +52,7 @@ function Histogram({ title, values }) {
   const counts = Array.from({ length: bins }, () => 0);
 
   values.forEach((v) => {
-    const i = Math.min(
-      bins - 1,
-      Math.floor(((v - min) / span) * bins)
-    );
+    const i = Math.min(bins - 1, Math.floor(((v - min) / span) * bins));
     counts[i]++;
   });
 
@@ -87,7 +67,7 @@ function Histogram({ title, values }) {
             key={i}
             style={{
               flex: 1,
-              height: `${(c / peak) * 100}%`,
+              height: `${peak ? (c / peak) * 100 : 0}%`,
               background: "currentColor",
               opacity: 0.75,
               borderRadius: 4,
@@ -102,18 +82,23 @@ function Histogram({ title, values }) {
   );
 }
 
-function ExceedanceCurve({ values }) {
-  if (!values?.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const pts = sorted.map((x, i) => ({
-    x,
-    y: 1 - i / (sorted.length - 1),
-  }));
+function ExceedanceCurve({ curve, values }) {
+  // Prefer curve computed by engine (more accurate), fallback to values
+  const pts = curve?.pts?.length
+    ? curve.pts.map((p) => ({ x: p.x, y: p.exceed }))
+    : values?.length
+    ? [...values]
+        .sort((a, b) => a - b)
+        .map((x, i, arr) => ({ x, y: 1 - i / (arr.length - 1) }))
+    : null;
 
-  const min = pts[0].x;
-  const max = pts[pts.length - 1].x;
+  if (!pts?.length) return null;
 
-  const mapX = (x) => 30 + ((x - min) / (max - min)) * 460;
+  const minX = pts[0].x;
+  const maxX = pts[pts.length - 1].x;
+  const spanX = Math.max(1e-9, maxX - minX);
+
+  const mapX = (x) => 30 + ((x - minX) / spanX) * 460;
   const mapY = (y) => 140 - y * 120;
 
   const d = pts
@@ -127,9 +112,7 @@ function ExceedanceCurve({ values }) {
         <path d="M30 20 L30 140 L490 140" stroke="currentColor" opacity="0.2" fill="none" />
         <path d={d} stroke="currentColor" strokeWidth="2" fill="none" />
       </svg>
-      <div style={{ fontSize: 12, opacity: 0.7 }}>
-        Y = P(Loss &gt; x)
-      </div>
+      <div style={{ fontSize: 12, opacity: 0.7 }}>Y = P(Loss &gt; x)</div>
     </div>
   );
 }
@@ -137,109 +120,72 @@ function ExceedanceCurve({ values }) {
 // ------------------ Main ------------------
 
 export default function ResultsView({ vendor, scenario, updateVendor, setActiveView }) {
-  if (!vendor || !scenario?.quant) {
-    return <div className="card">No quantification data available.</div>;
+  if (!vendor || !scenario) {
+    return <div className="card">No data available.</div>;
   }
 
-  const q = scenario.quant;
+  const quant = useMemo(() => ensureQuant(scenario.quant || {}), [scenario?.id]);
+
   const [running, setRunning] = useState(false);
-  const [results, setResults] = useState(null);
-  const cancelRef = useRef(false);
+  const [errMsg, setErrMsg] = useState("");
+
+  const stats = quant.stats;
+  const aleSamples = Array.isArray(quant.aleSamples) ? quant.aleSamples : [];
+  const curve = quant.curve || null;
 
   const runSimulation = async () => {
     setRunning(true);
-    cancelRef.current = false;
+    setErrMsg("");
 
-    const sims = 10000;
-    const ale = [];
-    const pel = [];
+    try {
+      // IMPORTANT: don’t mutate inputs – only build a simulation copy
+      let qForSim = ensureQuant(quant);
 
-    for (let i = 0; i < sims; i++) {
-      if (cancelRef.current) break;
-
-      // ---- Frequency chain
-      let lef = 0;
-
-      if (q.level === "LEF") {
-        lef = triangularSample(q.lef.min, q.lef.ml, q.lef.max);
+      // Auto-fix % scale if user typed 0..1:
+      // - PoA is always treated as % in engine
+      // - Susceptibility is treated as % ONLY in Direct mode
+      if (qForSim.level === "Contact Frequency") {
+        qForSim = {
+          ...qForSim,
+          probabilityOfAction: maybeConvert01toPercent(qForSim.probabilityOfAction),
+        };
       }
 
-      if (q.level === "TEF") {
-        const tef = triangularSample(q.tef.min, q.tef.ml, q.tef.max);
-        const susc =
-          q.susceptibilityMode === "Direct"
-            ? triangularSample(q.susceptibility.min, q.susceptibility.ml, q.susceptibility.max) / 100
-            : clamp01(
-                triangularSample(q.threatCapacity.min, q.threatCapacity.ml, q.threatCapacity.max) -
-                  triangularSample(q.resistanceStrength.min, q.resistanceStrength.ml, q.resistanceStrength.max)
-              );
-        lef = tef * clamp01(susc);
+      if (qForSim.level !== "LEF" && qForSim.susceptibilityMode === "Direct") {
+        qForSim = {
+          ...qForSim,
+          susceptibility: maybeConvert01toPercent(qForSim.susceptibility),
+        };
       }
 
-      if (q.level === "Contact Frequency") {
-        const cf = triangularSample(q.contactFrequency.min, q.contactFrequency.ml, q.contactFrequency.max);
-        const poa = triangularSample(q.probabilityOfAction.min, q.probabilityOfAction.ml, q.probabilityOfAction.max) / 100;
-        const tef = cf * clamp01(poa);
-        const susc =
-          q.susceptibilityMode === "Direct"
-            ? triangularSample(q.susceptibility.min, q.susceptibility.ml, q.susceptibility.max) / 100
-            : clamp01(
-                triangularSample(q.threatCapacity.min, q.threatCapacity.ml, q.threatCapacity.max) -
-                  triangularSample(q.resistanceStrength.min, q.resistanceStrength.ml, q.resistanceStrength.max)
-              );
-        lef = tef * clamp01(susc);
-      }
+      const out = await runFairMonteCarlo(qForSim, { sims: qForSim.sims });
 
-      // ---- Loss
-      const primary = triangularSample(q.primaryLoss.min, q.primaryLoss.ml, q.primaryLoss.max);
-      const slef = triangularSample(
-        q.secondaryLossEventFrequency.min,
-        q.secondaryLossEventFrequency.ml,
-        q.secondaryLossEventFrequency.max
+      const merged = ensureQuant({ ...quant, ...out });
+
+      // Persist into the scenario (so Dashboard/others see it)
+      const nextScenarios = (vendor.scenarios || []).map((s) =>
+        s.id === scenario.id ? { ...s, quant: merged } : s
       );
-      const slm = triangularSample(
-        q.secondaryLossMagnitude.min,
-        q.secondaryLossMagnitude.ml,
-        q.secondaryLossMagnitude.max
-      );
-
-      const perEvent = primary + slef * slm;
-
-      const k = poisson(Math.max(0, lef));
-      let annual = 0;
-      for (let e = 0; e < k; e++) {
-        annual += perEvent;
-        pel.push(perEvent);
+      updateVendor(vendor.id, { scenarios: nextScenarios });
+    } catch (e) {
+      // fairEngine throws { missing: [...] } when inputs invalid
+      const missing = e?.missing;
+      if (Array.isArray(missing) && missing.length) {
+        setErrMsg("Champs manquants / invalides :\n- " + missing.join("\n- "));
+      } else {
+        setErrMsg(e?.message ? String(e.message) : "Erreur inconnue");
       }
-      ale.push(annual);
+    } finally {
+      setRunning(false);
     }
-
-    const summary = {
-      ale: {
-        min: quantile(ale, 0.01),
-        ml: quantile(ale, 0.5),
-        max: quantile(ale, 0.99),
-        p10: quantile(ale, 0.1),
-        p90: quantile(ale, 0.9),
-      },
-      pel: {
-        min: quantile(pel, 0.01),
-        ml: quantile(pel, 0.5),
-        max: quantile(pel, 0.99),
-      },
-      aleSamples: ale,
-    };
-
-    setResults(summary);
-    setRunning(false);
   };
 
   return (
     <div className="card">
       <h2>FAIR Results</h2>
 
-      <div style={{ display: "flex", gap: 10 }}>
-        <button className="btn" onClick={() => setActiveView("Quantify")}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <button className="btn" onClick={() => setActiveView?.("Quantify")}>
           Back
         </button>
         <button className="btn primary" disabled={running} onClick={runSimulation}>
@@ -247,29 +193,41 @@ export default function ResultsView({ vendor, scenario, updateVendor, setActiveV
         </button>
       </div>
 
-      {results && (
+      {errMsg ? (
+        <div style={{ marginTop: 12, whiteSpace: "pre-wrap", fontSize: 13, opacity: 0.9 }}>
+          {errMsg}
+        </div>
+      ) : null}
+
+      {!stats ? (
+        <div style={{ marginTop: 14, opacity: 0.8 }}>
+          Pas de résultats encore. Clique <strong>Run Monte Carlo</strong>.
+        </div>
+      ) : (
         <>
           <div className="grid" style={{ marginTop: 16 }}>
             <div className="card">
               <strong>ALE</strong>
-              <div>Min: {money(results.ale.min)}</div>
-              <div>ML: {money(results.ale.ml)}</div>
-              <div>Max: {money(results.ale.max)}</div>
-              <div>P10: {money(results.ale.p10)}</div>
-              <div>P90: {money(results.ale.p90)}</div>
+              <div>Min: {money(stats.ale?.min)}</div>
+              <div>ML: {money(stats.ale?.ml)}</div>
+              <div>Max: {money(stats.ale?.max)}</div>
+              <div>P10: {money(stats.ale?.p10)}</div>
+              <div>P90: {money(stats.ale?.p90)}</div>
             </div>
 
             <div className="card">
               <strong>Per-Event Loss</strong>
-              <div>Min: {money(results.pel.min)}</div>
-              <div>ML: {money(results.pel.ml)}</div>
-              <div>Max: {money(results.pel.max)}</div>
+              <div>Min: {money(stats.pel?.min)}</div>
+              <div>ML: {money(stats.pel?.ml)}</div>
+              <div>Max: {money(stats.pel?.max)}</div>
+              <div>P10: {money(stats.pel?.p10)}</div>
+              <div>P90: {money(stats.pel?.p90)}</div>
             </div>
           </div>
 
-          <div style={{ marginTop: 16 }}>
-            <Histogram title="Annual Loss Distribution" values={results.aleSamples} />
-            <ExceedanceCurve values={results.aleSamples} />
+          <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
+            <Histogram title="Annual Loss Distribution" values={aleSamples} />
+            <ExceedanceCurve curve={curve} values={aleSamples} />
           </div>
         </>
       )}
