@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { emptyScenario, uid } from "../../lib/model";
 
-export default function ScenariosView({ vendor, updateVendor, setActiveView }) {
+export default function ScenariosView({ vendor, updateVendor, setActiveView, selectScenario }) {
   const vendorScenarios = useMemo(() => {
     return Array.isArray(vendor?.scenarios) ? vendor.scenarios : [];
   }, [vendor]);
