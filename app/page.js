@@ -69,7 +69,6 @@ class ErrorBoundary extends React.Component {
 
 // React n’est pas importé explicitement en Next 14 normalement,
 // mais une classe ErrorBoundary en a besoin.
-import React from "react";
 
 // ---------------------------
 // UI atoms
