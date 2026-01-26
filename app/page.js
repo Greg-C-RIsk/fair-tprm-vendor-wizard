@@ -811,12 +811,13 @@ export default function Page() {
           ) : activeView === "Tiering" ? (
             <TieringView vendor={selectedVendor} updateVendor={updateVendor} setActiveView={setActiveView} />
           ) : activeView === "Scenarios" ? (
-            <ScenariosView
-              vendor={selectedVendor}
-              selectedScenarioId={state.selectedScenarioId}
-              onSelectScenario={(id) => selectScenario(id)}
-              updateVendor={updateVendor}
-              setActiveView={setActiveView}
+  <ScenariosView
+    vendor={selectedVendor}
+    updateVendor={updateVendor}
+    setActiveView={setActiveView}
+    selectScenario={selectScenario}
+  />
+)
             />
           ) : activeView === "Quantify" ? (
             <QuantifyView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} />
