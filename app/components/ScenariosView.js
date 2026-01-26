@@ -4,27 +4,44 @@ import { useEffect, useMemo, useState } from "react";
 import { emptyScenario, uid } from "../../lib/model";
 
 export default function ScenariosView({ vendor, updateVendor, setActiveView }) {
-  const scenarios = useMemo(() => {
+  const vendorScenarios = useMemo(() => {
     return Array.isArray(vendor?.scenarios) ? vendor.scenarios : [];
   }, [vendor]);
 
-  // Local selection (for editing)
+  // Local working copy (edits live here until Save)
+  const [localScenarios, setLocalScenarios] = useState([]);
   const [activeScenarioId, setActiveScenarioId] = useState("");
+  const [isDirty, setIsDirty] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
 
-  // Keep selection valid when vendor/scenarios change
+  // When vendor changes, re-hydrate local copy (reset dirty)
   useEffect(() => {
-    if (!scenarios.length) {
+    setLocalScenarios(vendorScenarios);
+    setIsDirty(false);
+    setJustSaved(false);
+
+    if (!vendorScenarios.length) {
+      setActiveScenarioId("");
+    } else if (!activeScenarioId || !vendorScenarios.some((s) => s.id === activeScenarioId)) {
+      setActiveScenarioId(vendorScenarios[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendor?.id, vendorScenarios.length]);
+
+  // Keep selection valid even as local list changes
+  useEffect(() => {
+    if (!localScenarios.length) {
       setActiveScenarioId("");
       return;
     }
-    if (!activeScenarioId || !scenarios.some((s) => s.id === activeScenarioId)) {
-      setActiveScenarioId(scenarios[0].id);
+    if (!activeScenarioId || !localScenarios.some((s) => s.id === activeScenarioId)) {
+      setActiveScenarioId(localScenarios[0].id);
     }
-  }, [scenarios, activeScenarioId]);
+  }, [localScenarios, activeScenarioId]);
 
   const activeScenario = useMemo(() => {
-    return scenarios.find((s) => s.id === activeScenarioId) || null;
-  }, [scenarios, activeScenarioId]);
+    return localScenarios.find((s) => s.id === activeScenarioId) || null;
+  }, [localScenarios, activeScenarioId]);
 
   if (!vendor) {
     return (
@@ -37,41 +54,64 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView }) {
     );
   }
 
-  const persistScenarios = (nextScenarios) => {
-    // Autosave: we directly persist into the vendor via updateVendor
-    updateVendor(vendor.id, { scenarios: nextScenarios });
+  const markDirty = () => {
+    setIsDirty(true);
+    setJustSaved(false);
   };
 
   const addScenario = () => {
     const s = emptyScenario();
     const next = [
-      ...scenarios,
+      ...(Array.isArray(localScenarios) ? localScenarios : []),
       {
         ...s,
-        id: uid(), // ensure id is generated consistently with your model helpers
-        title: `Scenario ${scenarios.length + 1}`,
+        id: uid(),
+        title: `Scenario ${localScenarios.length + 1}`,
       },
     ];
-    persistScenarios(next);
+    setLocalScenarios(next);
     setActiveScenarioId(next[next.length - 1].id);
+    markDirty();
   };
 
   const deleteScenario = (scenarioId) => {
-    const next = scenarios.filter((s) => s.id !== scenarioId);
-    // Always keep at least 1 scenario
+    const next = localScenarios.filter((s) => s.id !== scenarioId);
+
     if (next.length === 0) {
       const s = { ...emptyScenario(), id: uid(), title: "Scenario 1" };
-      persistScenarios([s]);
+      setLocalScenarios([s]);
       setActiveScenarioId(s.id);
+      markDirty();
       return;
     }
-    persistScenarios(next);
+
+    setLocalScenarios(next);
     setActiveScenarioId(next[0].id);
+    markDirty();
   };
 
   const patchScenario = (scenarioId, patch) => {
-    const next = scenarios.map((s) => (s.id === scenarioId ? { ...s, ...patch } : s));
-    persistScenarios(next);
+    const next = localScenarios.map((s) => (s.id === scenarioId ? { ...s, ...patch } : s));
+    setLocalScenarios(next);
+    markDirty();
+  };
+
+  const saveChanges = () => {
+    // Commit to vendor (and your page.js will persist to localStorage)
+    updateVendor(vendor.id, { scenarios: localScenarios });
+    setIsDirty(false);
+    setJustSaved(true);
+    setTimeout(() => setJustSaved(false), 1500);
+  };
+
+  const cancelChanges = () => {
+    // Revert local edits
+    setLocalScenarios(vendorScenarios);
+    setIsDirty(false);
+    setJustSaved(false);
+
+    if (vendorScenarios.length) setActiveScenarioId(vendorScenarios[0].id);
+    else setActiveScenarioId("");
   };
 
   const Field = ({ label, value, onChange, placeholder, textarea }) => {
@@ -110,7 +150,7 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView }) {
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-          {scenarios.map((s) => {
+          {localScenarios.map((s) => {
             const active = s.id === activeScenarioId;
             return (
               <button
@@ -133,6 +173,21 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView }) {
             );
           })}
         </div>
+
+        {/* Save/Cancel actions */}
+        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn primary" onClick={saveChanges} disabled={!isDirty}>
+            Save changes
+          </button>
+          <button className="btn" onClick={cancelChanges} disabled={!isDirty}>
+            Cancel
+          </button>
+          {justSaved ? (
+            <div style={{ fontSize: 12, opacity: 0.85, alignSelf: "center" }}>Saved ✅</div>
+          ) : isDirty ? (
+            <div style={{ fontSize: 12, opacity: 0.75, alignSelf: "center" }}>Unsaved changes</div>
+          ) : null}
+        </div>
       </div>
 
       {/* Right: scenario editor */}
@@ -147,7 +202,7 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView }) {
                   {activeScenario.title?.trim() ? activeScenario.title : "(Untitled scenario)"}
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.8, marginTop: 6 }}>
-                  Autosave is ON — no save button needed.
+                  Changes are kept locally until you click <strong>Save changes</strong>.
                 </div>
               </div>
 
