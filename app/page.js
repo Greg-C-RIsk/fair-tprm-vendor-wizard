@@ -27,7 +27,7 @@ const LS_KEY = "fair_tprm_training_v6";
 // ---------------------------
 // Minimal ErrorBoundary (évite la “page blanche”)
 // ---------------------------
-class ErrorBoundary extends React.Component {
+class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
     this.state = { hasError: false, err: null };
