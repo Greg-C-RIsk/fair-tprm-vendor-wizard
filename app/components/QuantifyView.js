@@ -3,12 +3,32 @@
 import { useEffect, useMemo, useState } from "react";
 import { emptyQuant } from "../../lib/model";
 
-function RangeRow({ label, value, onChange }) {
+function CardBlock({ title, subtitle, children }) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(255,255,255,0.12)",
+        background: "rgba(255,255,255,0.04)",
+        borderRadius: 14,
+        padding: 14,
+      }}
+    >
+      <div style={{ display: "grid", gap: 4, marginBottom: 10 }}>
+        <div style={{ fontWeight: 900 }}>{title}</div>
+        {subtitle ? <div style={{ fontSize: 12, opacity: 0.75 }}>{subtitle}</div> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function RangeRow({ label, value, onChange, help }) {
   const v = value || { min: "", ml: "", max: "" };
 
   return (
     <div style={{ display: "grid", gap: 6 }}>
       <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>{label}</div>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
         <input
           className="input"
@@ -29,9 +49,8 @@ function RangeRow({ label, value, onChange }) {
           onChange={(e) => onChange({ ...v, max: e.target.value })}
         />
       </div>
-      <div style={{ fontSize: 11, opacity: 0.65 }}>
-        Mets des nombres (ex: 1, 5, 12). Tu peux laisser vide si tu n’as pas encore l’estimation.
-      </div>
+
+      {help ? <div style={{ fontSize: 11, opacity: 0.65 }}>{help}</div> : null}
     </div>
   );
 }
@@ -39,12 +58,11 @@ function RangeRow({ label, value, onChange }) {
 export default function QuantifyView({ vendor, scenario, updateVendor, setActiveView }) {
   const scenarioId = scenario?.id || "";
 
-  // Copie locale (on édite ici, puis Save écrit dans le state global)
+  // local copy (edit here, save writes to global state)
   const [localQuant, setLocalQuant] = useState(emptyQuant());
   const [isDirty, setIsDirty] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
 
-  // Recharger quand on change de scénario
   useEffect(() => {
     const q = scenario?.quant && typeof scenario.quant === "object" ? scenario.quant : emptyQuant();
     setLocalQuant({ ...emptyQuant(), ...q });
@@ -82,24 +100,6 @@ export default function QuantifyView({ vendor, scenario, updateVendor, setActive
     setJustSaved(false);
   };
 
-  const frequencyLabel = useMemo(() => {
-    if (localQuant.level === "LEF") return "Loss Event Frequency (LEF)";
-    if (localQuant.level === "TEF") return "Threat Event Frequency (TEF)";
-    return "Contact Frequency";
-  }, [localQuant.level]);
-
-  const frequencyValue = useMemo(() => {
-    if (localQuant.level === "LEF") return localQuant.lef;
-    if (localQuant.level === "TEF") return localQuant.tef;
-    return localQuant.contactFrequency;
-  }, [localQuant.level, localQuant.lef, localQuant.tef, localQuant.contactFrequency]);
-
-  const setFrequencyValue = (nextRange) => {
-    if (localQuant.level === "LEF") patchQuant({ lef: nextRange });
-    else if (localQuant.level === "TEF") patchQuant({ tef: nextRange });
-    else patchQuant({ contactFrequency: nextRange });
-  };
-
   if (!vendor || !scenario) {
     return (
       <div className="card card-pad">
@@ -115,8 +115,111 @@ export default function QuantifyView({ vendor, scenario, updateVendor, setActive
     );
   }
 
+  // --- Contextuel : FREQUENCE (colonne gauche)
+  const level = localQuant.level || "LEF";
+
+  const renderFrequencyLeft = () => {
+    if (level === "LEF") {
+      return (
+        <CardBlock
+          title="Frequency (LEF)"
+          subtitle="Renseigne uniquement la Loss Event Frequency (min / ML / max)."
+        >
+          <RangeRow
+            label="Loss Event Frequency (LEF)"
+            value={localQuant.lef}
+            onChange={(v) => patchQuant({ lef: v })}
+          />
+        </CardBlock>
+      );
+    }
+
+    if (level === "TEF") {
+      return (
+        <CardBlock
+          title="Frequency (TEF)"
+          subtitle="Renseigne Threat Event Frequency et Vulnerability (min / ML / max)."
+        >
+          <div style={{ display: "grid", gap: 14 }}>
+            <RangeRow
+              label="Threat Event Frequency (TEF)"
+              value={localQuant.tef}
+              onChange={(v) => patchQuant({ tef: v })}
+            />
+            <RangeRow
+              label="Vulnerability (Susceptibility)"
+              value={localQuant.susceptibility}
+              onChange={(v) => patchQuant({ susceptibility: v })}
+              help="(On garde Susceptibility comme proxy de Vulnerability pour ton modèle.)"
+            />
+          </div>
+        </CardBlock>
+      );
+    }
+
+    // Contact Frequency
+    return (
+      <CardBlock
+        title="Frequency (Contact Frequency)"
+        subtitle="Renseigne Contact Frequency, Probability of Action, Threat Capacity, Resistance Strength."
+      >
+        <div style={{ display: "grid", gap: 14 }}>
+          <RangeRow
+            label="Contact Frequency"
+            value={localQuant.contactFrequency}
+            onChange={(v) => patchQuant({ contactFrequency: v })}
+          />
+          <RangeRow
+            label="Probability of Action"
+            value={localQuant.probabilityOfAction}
+            onChange={(v) => patchQuant({ probabilityOfAction: v })}
+          />
+          <RangeRow
+            label="Threat Capacity"
+            value={localQuant.threatCapacity}
+            onChange={(v) => patchQuant({ threatCapacity: v })}
+          />
+          <RangeRow
+            label="Resistance Strength"
+            value={localQuant.resistanceStrength}
+            onChange={(v) => patchQuant({ resistanceStrength: v })}
+          />
+        </div>
+      </CardBlock>
+    );
+  };
+
+  // --- Toujours visible : MAGNITUDE (colonne droite)
+  const renderLossRight = () => {
+    return (
+      <CardBlock
+        title="Magnitude (Loss)"
+        subtitle="Toujours visible : Primary Loss + Secondary Loss (Frequency + Magnitude)."
+      >
+        <div style={{ display: "grid", gap: 14 }}>
+          <RangeRow
+            label="Primary Loss"
+            value={localQuant.primaryLoss}
+            onChange={(v) => patchQuant({ primaryLoss: v })}
+          />
+          <RangeRow
+            label="Secondary Loss Event Frequency"
+            value={localQuant.secondaryLossEventFrequency}
+            onChange={(v) => patchQuant({ secondaryLossEventFrequency: v })}
+          />
+          <RangeRow
+            label="Secondary Loss Magnitude"
+            value={localQuant.secondaryLossMagnitude}
+            onChange={(v) => patchQuant({ secondaryLossMagnitude: v })}
+          />
+        </div>
+      </CardBlock>
+    );
+  };
+
   return (
     <div className="card card-pad">
+      {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ margin: 0 }}>Quantify</h2>
@@ -125,7 +228,7 @@ export default function QuantifyView({ vendor, scenario, updateVendor, setActive
             <strong>{scenario.title?.trim() ? scenario.title : "(Untitled)"}</strong>
           </div>
           <div style={{ marginTop: 6, opacity: 0.75, fontSize: 13 }}>
-            Tu modifies ici, puis <strong>Save</strong> pour enregistrer. Ensuite tu peux aller sur Results.
+            Édite → <strong>Save</strong> → Results.
           </div>
         </div>
 
@@ -135,6 +238,7 @@ export default function QuantifyView({ vendor, scenario, updateVendor, setActive
         </div>
       </div>
 
+      {/* Save/Cancel */}
       <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <button className="btn primary" onClick={save} disabled={!isDirty}>
           Save
@@ -149,65 +253,48 @@ export default function QuantifyView({ vendor, scenario, updateVendor, setActive
         ) : null}
       </div>
 
-      <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
-        {/* Level */}
-        <div style={{ display: "grid", gap: 6, maxWidth: 420 }}>
-          <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>Abstraction level</div>
-          <select
-            className="input"
-            value={localQuant.level || "LEF"}
-            onChange={(e) => patchQuant({ level: e.target.value })}
-          >
-            <option value="LEF">LEF</option>
-            <option value="TEF">TEF</option>
-            <option value="Contact Frequency">Contact Frequency</option>
-          </select>
+      {/* Abstraction level */}
+      <div style={{ marginTop: 16, maxWidth: 420 }}>
+        <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>Abstraction level</div>
+        <select
+          className="input"
+          value={level}
+          onChange={(e) => patchQuant({ level: e.target.value })}
+        >
+          <option value="LEF">LEF</option>
+          <option value="TEF">TEF</option>
+          <option value="Contact Frequency">Contact Frequency</option>
+        </select>
+      </div>
+
+      {/* Two-column layout: Frequency (left) / Magnitude (right) */}
+      <div
+        style={{
+          marginTop: 14,
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 14,
+          alignItems: "start",
+        }}
+      >
+        <div style={{ display: "grid", gap: 14 }}>
+          {renderFrequencyLeft()}
+
+          <CardBlock title="Simulation" subtitle="Optionnel (tu peux laisser 10000).">
+            <div style={{ display: "grid", gap: 6, maxWidth: 240 }}>
+              <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>Simulations</div>
+              <input
+                className="input"
+                value={localQuant.sims ?? 10000}
+                onChange={(e) => patchQuant({ sims: e.target.value })}
+                placeholder="10000"
+              />
+            </div>
+          </CardBlock>
         </div>
 
-        {/* Frequency */}
-        <RangeRow label={frequencyLabel} value={frequencyValue} onChange={setFrequencyValue} />
-
-        {/* Probability / Susceptibility */}
-        <RangeRow
-          label="Probability of Action"
-          value={localQuant.probabilityOfAction}
-          onChange={(v) => patchQuant({ probabilityOfAction: v })}
-        />
-        <RangeRow
-          label="Susceptibility"
-          value={localQuant.susceptibility}
-          onChange={(v) => patchQuant({ susceptibility: v })}
-        />
-
-        {/* Loss */}
-        <RangeRow
-          label="Primary Loss"
-          value={localQuant.primaryLoss}
-          onChange={(v) => patchQuant({ primaryLoss: v })}
-        />
-        <RangeRow
-          label="Secondary Loss Event Frequency"
-          value={localQuant.secondaryLossEventFrequency}
-          onChange={(v) => patchQuant({ secondaryLossEventFrequency: v })}
-        />
-        <RangeRow
-          label="Secondary Loss Magnitude"
-          value={localQuant.secondaryLossMagnitude}
-          onChange={(v) => patchQuant({ secondaryLossMagnitude: v })}
-        />
-
-        {/* Sims */}
-        <div style={{ display: "grid", gap: 6, maxWidth: 240 }}>
-          <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>Simulations</div>
-          <input
-            className="input"
-            value={localQuant.sims ?? 10000}
-            onChange={(e) => patchQuant({ sims: e.target.value })}
-            placeholder="10000"
-          />
-          <div style={{ fontSize: 11, opacity: 0.65 }}>
-            Tu peux laisser 10000.
-          </div>
+        <div style={{ display: "grid", gap: 14 }}>
+          {renderLossRight()}
         </div>
       </div>
     </div>
