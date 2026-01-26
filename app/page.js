@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, Component } from "react";
 
 // Views (components folder)
 import TieringView from "./components/TieringView";
