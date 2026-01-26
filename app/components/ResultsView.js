@@ -21,6 +21,11 @@ const money = (n) => {
   }).format(n);
 };
 
+const fmt = (n, digits = 2) => {
+  if (!Number.isFinite(n)) return "—";
+  return Number(n).toFixed(digits);
+};
+
 const pct = (x) => {
   if (!Number.isFinite(x)) return "—";
   return `${(x * 100).toFixed(2)}%`;
