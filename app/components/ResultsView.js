@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { ensureQuant, runFairMonteCarlo } from "../lib/fairEngine";
+import { ensureQuant, runFairMonteCarlo } from "../../lib/fairEngine";
 
 // ------------------ Helpers ------------------
 
