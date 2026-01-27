@@ -262,11 +262,11 @@ const onPointerLeave = () => {
 
       <div style={{ marginTop: 12, position: "relative" }}>
         <svg
-          ref={svgRef}
-          viewBox={`0 0 ${W} ${H}`}
-          style={{ width: "100%", height: "auto" }}
-          onMouseMove={onMove}
-          onMouseLeave={() => setHover(null)}
+           ref={svgRef}
+  viewBox={`0 0 ${W} ${H}`}
+  style={{ width: "100%", height: "auto" }}
+  onPointerMove={onPointerMove}
+  onPointerLeave={onPointerLeave}
         >
           <path
             d={`M ${padL} ${padT} L ${padL} ${H - padB} L ${W - padR} ${H - padB}`}
