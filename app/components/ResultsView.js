@@ -317,6 +317,33 @@ function fmtProb(n) {
   if (!Number.isFinite(n)) return "—";
   return n.toFixed(3);
 }
+function lefToHuman(lefPerYear) {
+  const lef = Number(lefPerYear);
+  if (!Number.isFinite(lef) || lef <= 0) {
+    return {
+      lef,
+      cadenceLabel: "—",
+      intervalYears: null,
+      probYear: null,
+    };
+  }
+
+  // interval = 1/LEF years (mean waiting time)
+  const intervalYears = 1 / lef;
+
+  let cadenceLabel = "";
+  if (intervalYears >= 1) {
+    cadenceLabel = `≈ 1 fois tous les ${intervalYears.toFixed(intervalYears < 10 ? 1 : 0)} ans`;
+  } else {
+    // < 1 year => show "x times per year"
+    cadenceLabel = `≈ ${lef.toFixed(lef < 10 ? 1 : 0)} fois par an`;
+  }
+
+  // Probability of ≥1 event in a year under Poisson(LEF)
+  const probYear = 1 - Math.exp(-lef);
+
+  return { lef, cadenceLabel, intervalYears, probYear };
+}
 
 function calcFrequencySummary(q) {
   const level = q?.level || "LEF";
