@@ -219,6 +219,35 @@ const pickNearestPoint = (domainX) => {
   return Math.abs(a.x - domainX) <= Math.abs(b.x - domainX) ? a : b;
 };
 
+  const interpolateAtX = (domainX) => {
+  if (!pts?.length) return null;
+
+  // si on est hors plage, on colle aux extrêmes
+  if (domainX <= pts[0].x) return { x: pts[0].x, exceed: pts[0].exceed };
+  if (domainX >= pts[pts.length - 1].x) return { x: pts[pts.length - 1].x, exceed: pts[pts.length - 1].exceed };
+
+  // on cherche les 2 points "encadrants" (a et b) autour de domainX
+  let lo = 0;
+  let hi = pts.length - 1;
+
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (pts[mid].x <= domainX) lo = mid;
+    else hi = mid;
+  }
+
+  const a = pts[lo];
+  const b = pts[lo + 1];
+  const span = Math.max(1e-9, b.x - a.x);
+  const t = (domainX - a.x) / span;
+
+  // interpolation linéaire sur "exceed"
+  const exceed = a.exceed + t * (b.exceed - a.exceed);
+
+  // IMPORTANT: x = domainX (le curseur), pas a.x ou b.x
+  return { x: domainX, exceed };
+};
+  
 const onPointerMove = (e) => {
   const svg = svgRef.current;
   if (!svg) return;
@@ -235,15 +264,15 @@ const onPointerMove = (e) => {
     const clampedT = Math.max(0, Math.min(1, t));
     const domainX = minX + clampedT * (maxX - minX);
 
-    const best = pickNearestPoint(domainX);
-    if (!best) return;
+   const p = interpolateAtX(domainX);
+if (!p) return;
 
-    // On stocke aussi la position pixel du point pour placer le tooltip EXACTEMENT dessus
-    setHover({
-      ...best,
-      xPx: mapX(best.x),
-      yPx: mapY(best.exceed),
-    });
+// Le point suit exactement le curseur (x = domainX)
+setHover({
+  ...p,
+  xPx: mapX(p.x),
+  yPx: mapY(p.exceed),
+});
   });
 };
 
