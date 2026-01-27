@@ -151,6 +151,34 @@ function getScenarioAle(q) {
   return { p50: ale.ml, p90: ale.p90, p10: ale.p10, min: ale.min, max: ale.max };
 }
 
+function scenarioToRow(v, s) {
+  const status = scenarioStatus(s);
+  const ale = getScenarioAle(s?.quant);
+  const tieringObj = v?.tiering || emptyTiering();
+  const idx = tierIndex(tieringObj);
+  const suggested = suggestTierFromIndex(idx);
+  const effectiveTier = (v?.tier || "").trim() ? v.tier.trim() : suggested.tier;
+
+  return {
+    vendorId: v.id,
+    vendorName: v?.name?.trim() ? v.name : "(Unnamed vendor)",
+    tier: effectiveTier,
+    tierIndex: idx,
+
+    scenarioId: s.id,
+    scenarioTitle: s?.title?.trim() ? s.title : "(Untitled scenario)",
+    status,
+
+    aleP50: ale?.p50 ?? null,
+    aleP90: ale?.p90 ?? null,
+    lastRunAt: s?.quant?.lastRunAt || "",
+  };
+}
+
+function isFinitePos(n) {
+  return Number.isFinite(n) && n >= 0;
+}
+
 // -----------------------------
 // FAIR summary (TEF / Susc / LEF)
 // -----------------------------
