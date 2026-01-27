@@ -200,25 +200,58 @@ function ExceedanceCurve({ title, subtitle, curve }) {
     .map((p, i) => `${i === 0 ? "M" : "L"} ${mapX(p.x).toFixed(2)} ${mapY(p.exceed).toFixed(2)}`)
     .join(" ");
 
-  const onMove = (e) => {
-    const svg = svgRef.current;
-    if (!svg) return;
+  const rafRef = useRef(null);
+
+const pickNearestPoint = (domainX) => {
+  // curve.pts est trié par x (car vient de sorted quantiles)
+  // On fait une recherche “rapide” plutôt qu’une boucle complète.
+  let lo = 0;
+  let hi = pts.length - 1;
+
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (pts[mid].x < domainX) lo = mid;
+    else hi = mid;
+  }
+
+  const a = pts[lo];
+  const b = pts[hi];
+  return Math.abs(a.x - domainX) <= Math.abs(b.x - domainX) ? a : b;
+};
+
+const onPointerMove = (e) => {
+  const svg = svgRef.current;
+  if (!svg) return;
+
+  // throttle via RAF => plus fluide / plus réactif
+  if (rafRef.current) cancelAnimationFrame(rafRef.current);
+
+  rafRef.current = requestAnimationFrame(() => {
     const rect = svg.getBoundingClientRect();
     const mx = e.clientX - rect.left;
-    const t = (mx - padL) / Math.max(1e-9, W - padL - padR);
-    const domainX = minX + t * (maxX - minX);
 
-    let best = null;
-    let bestDist = Infinity;
-    for (const p of pts) {
-      const dist = Math.abs(p.x - domainX);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = p;
-      }
-    }
-    if (best) setHover(best);
-  };
+    // Convertit la position souris -> “x” dans le domaine (loss threshold)
+    const t = (mx - padL) / Math.max(1e-9, W - padL - padR);
+    const clampedT = Math.max(0, Math.min(1, t));
+    const domainX = minX + clampedT * (maxX - minX);
+
+    const best = pickNearestPoint(domainX);
+    if (!best) return;
+
+    // On stocke aussi la position pixel du point pour placer le tooltip EXACTEMENT dessus
+    setHover({
+      ...best,
+      xPx: mapX(best.x),
+      yPx: mapY(best.exceed),
+    });
+  });
+};
+
+const onPointerLeave = () => {
+  if (rafRef.current) cancelAnimationFrame(rafRef.current);
+  rafRef.current = null;
+  setHover(null);
+};
 
   return (
     <Card style={{ padding: 14 }}>
