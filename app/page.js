@@ -826,8 +826,12 @@ export default function Page() {
           ) : activeView === "Results" ? (
             <ResultsView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} setActiveView={setActiveView} />
           ) : activeView === "Treatments" ? (
-            <TreatmentsView vendor={selectedVendor} scenario={selectedScenario} />
-          ) : activeView === "Decisions" ? (
+  <TreatmentsView
+    vendor={selectedVendor}
+    scenario={selectedScenario}
+    updateVendor={updateVendor}
+  />
+) : activeView === "Decisions" ? (
             <DecisionsView vendor={selectedVendor} scenario={selectedScenario} />
           ) : activeView === "Dashboard" ? (
             <DashboardView
