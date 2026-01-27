@@ -534,6 +534,29 @@ const lefHuman = useMemo(() => lefToHuman(lefML), [lefML]);
         ) : null}
       </Card>
 
+<Card>
+  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+    <div style={{ fontSize: 16, fontWeight: 950 }}>Probabilité du scénario (LEF)</div>
+    <Badge tone="neutral">LEF (ML): {lefHuman?.lef ? lefHuman.lef.toFixed(2) : "—"} / an</Badge>
+  </div>
+
+  <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9, lineHeight: 1.45 }}>
+    {Number.isFinite(lefHuman?.lef) ? (
+      <>
+        <div>
+          Interprétation : <strong>{lefHuman.cadenceLabel}</strong>
+        </div>
+        <div style={{ marginTop: 6, opacity: 0.85 }}>
+          Probabilité qu’il arrive au moins une fois sur 1 an :{" "}
+          <strong>{(lefHuman.probYear * 100).toFixed(1)}%</strong>
+        </div>
+      </>
+    ) : (
+      <div>Renseigne LEF (ML) pour obtenir une interprétation.</div>
+    )}
+  </div>
+</Card>
+
       {/* Input checks */}
       {inputWarnings.length ? (
         <Card>
