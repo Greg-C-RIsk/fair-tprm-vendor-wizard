@@ -1,18 +1,14 @@
 "use client";
 
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ensureQuant } from "../../lib/fairEngine";
-import {
-  runFairCamMonteCarlo,
-  getScenarioControls,
-  getBaselineControls,
-  getWhatIfControls,
-} from "../../lib/fairCamEngine";
+import { ensureQuant, runFairMonteCarlo, deriveSusceptibility, clamp01 } from "../../lib/fairEngine";
 
 /**
- * ResultsView — FAIR-CAM
- * Baseline (Implemented controls) vs What-If (Implemented + includeInWhatIf)
- * Monte Carlo + deltas (P50/P90/ALE etc.)
+ * ResultsView — FAIR only
+ * - ALE / PEL p10/p50/p90
+ * - Exceedance curve + histogram
+ * - Input sanity checks (0..1 for probabilities)
+ * - No CAM, no baseline/what-if
  */
 
 const money = (n) => {
@@ -22,11 +18,6 @@ const money = (n) => {
     currency: "EUR",
     maximumFractionDigits: 0,
   }).format(n);
-};
-
-const pct = (x) => {
-  if (!Number.isFinite(x)) return "—";
-  return `${(x * 100).toFixed(1)}%`;
 };
 
 function Card({ children, style }) {
@@ -92,7 +83,7 @@ function StatLine({ label, value, help }) {
   );
 }
 
-/** Histogram with hover tooltip (Annual Loss) */
+/** Histogram with hover tooltip (values = distribution) */
 function Histogram({ title, subtitle, values, bins = 28 }) {
   const [hover, setHover] = useState(null);
 
@@ -165,19 +156,19 @@ function Histogram({ title, subtitle, values, bins = 28 }) {
               maxWidth: 320,
             }}
           >
-            <div style={{ fontWeight: 900 }}>Annual loss bin</div>
+            <div style={{ fontWeight: 900 }}>Bin details</div>
             <div style={{ marginTop: 6, opacity: 0.92 }}>
               Range: {money(hover.from)} → {money(hover.to)}
             </div>
             <div style={{ opacity: 0.92 }}>
-              In this bin: {hover.count.toLocaleString()} sims ({pct(hover.prob)})
+              In this bin: {hover.count.toLocaleString()} sims ({(hover.prob * 100).toFixed(1)}%)
             </div>
           </div>
         ) : null}
       </div>
 
       <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-        X-axis: annual loss amount • Y-axis: how often the simulation landed in that range
+        X-axis: value • Y-axis: frequency in simulation
       </div>
     </Card>
   );
@@ -288,7 +279,7 @@ function ExceedanceCurve({ title, subtitle, curve }) {
               Threshold (x): <strong>{money(hover.x)}</strong>
             </div>
             <div style={{ opacity: 0.92 }}>
-              P(Annual Loss &gt; x): <strong>{pct(hover.exceed)}</strong>
+              P(Annual Loss &gt; x): <strong>{(hover.exceed * 100).toFixed(1)}%</strong>
             </div>
           </div>
         ) : null}
@@ -301,17 +292,74 @@ function ExceedanceCurve({ title, subtitle, curve }) {
   );
 }
 
-function deltaAbs(a, b) {
-  // delta = b - a
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-  return b - a;
+// -------------------- small helpers --------------------
+const toNum = (x) => {
+  if (x === null || x === undefined || x === "") return null;
+  const n = Number(String(x).replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+};
+
+function checkTriad01(label, triad) {
+  const out = [];
+  for (const k of ["min", "ml", "max"]) {
+    const v = toNum(triad?.[k]);
+    if (v === null) continue;
+    if (v < 0 || v > 1) out.push(`${label} (${k}) must be between 0 and 1 (you have ${v}).`);
+  }
+  return out;
 }
 
-function deltaPctReduction(base, whatIf) {
-  // reduction% positive when whatIf < base
-  if (!Number.isFinite(base) || !Number.isFinite(whatIf)) return null;
-  if (base === 0) return null;
-  return (base - whatIf) / base;
+function fmtRate(n) {
+  if (!Number.isFinite(n)) return "—";
+  return n.toFixed(2);
+}
+function fmtProb(n) {
+  if (!Number.isFinite(n)) return "—";
+  return n.toFixed(3);
+}
+
+function calcFrequencySummary(q) {
+  const level = q?.level || "LEF";
+  const lefML = toNum(q?.lef?.ml);
+  const tefML = toNum(q?.tef?.ml);
+  const cfML = toNum(q?.contactFrequency?.ml);
+  const poaML = toNum(q?.probabilityOfAction?.ml);
+
+  const suscMode = q?.susceptibilityMode || "Direct";
+  const suscDirectML = toNum(q?.susceptibility?.ml);
+  const tcML = toNum(q?.threatCapacity?.ml);
+  const rsML = toNum(q?.resistanceStrength?.ml);
+
+  let tefCalcML = null;
+  let suscCalcML = null;
+  let lefCalcML = null;
+
+  if (level === "LEF") {
+    lefCalcML = lefML;
+  } else if (level === "TEF") {
+    tefCalcML = tefML;
+
+    if (suscMode === "Direct") {
+      suscCalcML = suscDirectML;
+    } else if (tcML !== null && rsML !== null) {
+      suscCalcML = clamp01(deriveSusceptibility(tcML, rsML));
+    }
+
+    if (tefCalcML !== null && suscCalcML !== null) lefCalcML = tefCalcML * suscCalcML;
+  } else {
+    // Contact Frequency
+    if (cfML !== null && poaML !== null) tefCalcML = cfML * poaML;
+
+    if (suscMode === "Direct") {
+      suscCalcML = suscDirectML;
+    } else if (tcML !== null && rsML !== null) {
+      suscCalcML = clamp01(deriveSusceptibility(tcML, rsML));
+    }
+
+    if (tefCalcML !== null && suscCalcML !== null) lefCalcML = tefCalcML * suscCalcML;
+  }
+
+  return { level, tefCalcML, suscCalcML, lefCalcML };
 }
 
 export default function ResultsView({ vendor, scenario, updateVendor, setActiveView }) {
@@ -334,57 +382,75 @@ export default function ResultsView({ vendor, scenario, updateVendor, setActiveV
 
   const q = useMemo(() => ensureQuant(localQuant), [localQuant]);
 
-  const allControls = useMemo(() => getScenarioControls(scenario), [scenario]);
-  const baselineControls = useMemo(() => getBaselineControls(allControls), [allControls]);
-  const whatIfControls = useMemo(() => getWhatIfControls(allControls), [allControls]);
-
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState("");
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9));
 
-  // Results stored in scenario.camResults
-  const camResults = scenario.camResults || null;
+  const hasResults = !!q?.stats?.ale && Array.isArray(q?.aleSamples) && q.aleSamples.length > 0;
 
-  const runBaselineVsWhatIf = async () => {
+  // --- Input sanity checks (probabilities must be 0..1)
+  const inputWarnings = useMemo(() => {
+    const warnings = [];
+
+    // Only probabilities:
+    // - Contact Frequency: Probability of Action must be 0..1
+    // - Any level != LEF: Susceptibility (if Direct) must be 0..1
+    const level = q?.level || "LEF";
+
+    if (level === "Contact Frequency") warnings.push(...checkTriad01("Probability of Action", q?.probabilityOfAction));
+
+    if (level !== "LEF" && (q?.susceptibilityMode || "Direct") === "Direct") {
+      warnings.push(...checkTriad01("Susceptibility", q?.susceptibility));
+    }
+
+    // Also: if user typed 30 (meaning 30%), show a “common mistake” hint
+    const spotPercentMistake = (label, triad) => {
+      const ml = toNum(triad?.ml);
+      if (ml !== null && ml > 1 && ml <= 100) {
+        warnings.push(`${label} looks like a percent (ML=${ml}). In this tool you must use 0..1 (so 30% = 0.30).`);
+      }
+    };
+
+    if (level === "Contact Frequency") spotPercentMistake("Probability of Action", q?.probabilityOfAction);
+    if (level !== "LEF" && (q?.susceptibilityMode || "Direct") === "Direct") spotPercentMistake("Susceptibility", q?.susceptibility);
+
+    return warnings;
+  }, [q]);
+
+  const freqSummary = useMemo(() => calcFrequencySummary(q), [q]);
+
+  const runFairOnly = async () => {
     setRunning(true);
     setProgress("Starting…");
 
     try {
       const baseQuant = ensureQuant(q);
 
-      setProgress("Running baseline (Implemented controls) …");
-      const baseline = await runFairCamMonteCarlo(baseQuant, baselineControls, {
+      const res = await runFairMonteCarlo(baseQuant, {
         sims: baseQuant.sims,
         seed,
+        curvePoints: Number(baseQuant?.curvePoints ?? 60),
         onProgress: ({ label }) => setProgress(label || ""),
         yield: true,
       });
 
-      setProgress("Running what-if (Implemented + simulated) …");
-      const whatIf = await runFairCamMonteCarlo(baseQuant, whatIfControls, {
-        sims: baseQuant.sims,
-        seed, // same seed => more stable deltas
-        onProgress: ({ label }) => setProgress(label || ""),
-        yield: true,
+      // persist into scenario.quant
+      const nextScenarios = (vendor.scenarios || []).map((s) => {
+        if (s.id !== scenario.id) return s;
+        return {
+          ...s,
+          quant: {
+            ...(s.quant || {}),
+            sims: res.sims,
+            lastRunAt: res.lastRunAt,
+            stats: res.stats,
+            aleSamples: res.aleSamples,
+            pelSamples: res.pelSamples,
+            curve: res.curve,
+          },
+        };
       });
 
-      const nextCamResults = {
-        lastRunAt: new Date().toISOString(),
-        seed,
-        baseline: {
-          ...baseline,
-          controlCount: baselineControls.length,
-        },
-        whatIf: {
-          ...whatIf,
-          controlCount: whatIfControls.length,
-        },
-      };
-
-      // persist into scenario
-      const nextScenarios = (vendor.scenarios || []).map((s) =>
-        s.id === scenario.id ? { ...s, camResults: nextCamResults } : s
-      );
       updateVendor(vendor.id, { scenarios: nextScenarios });
 
       setProgress("Done.");
@@ -399,250 +465,150 @@ export default function ResultsView({ vendor, scenario, updateVendor, setActiveV
     }
   };
 
-  const hasCam = !!camResults?.baseline?.stats && !!camResults?.whatIf?.stats;
-
-  const deltas = useMemo(() => {
-    if (!hasCam) return null;
-
-    const b = camResults.baseline.stats;
-    const w = camResults.whatIf.stats;
-
-    const d = {
-      ale: {
-        p10: deltaAbs(b.ale.p10, w.ale.p10),
-        p50: deltaAbs(b.ale.ml, w.ale.ml),
-        p90: deltaAbs(b.ale.p90, w.ale.p90),
-        redP50: deltaPctReduction(b.ale.ml, w.ale.ml),
-        redP90: deltaPctReduction(b.ale.p90, w.ale.p90),
-      },
-      pel: {
-        p10: deltaAbs(b.pel.p10, w.pel.p10),
-        p50: deltaAbs(b.pel.ml, w.pel.ml),
-        p90: deltaAbs(b.pel.p90, w.pel.p90),
-        redP50: deltaPctReduction(b.pel.ml, w.pel.ml),
-        redP90: deltaPctReduction(b.pel.p90, w.pel.p90),
-      },
-      chain: {
-        tef: deltaAbs(camResults.baseline.chain?.avgTEF, camResults.whatIf.chain?.avgTEF),
-        lef: deltaAbs(camResults.baseline.chain?.avgLEF, camResults.whatIf.chain?.avgLEF),
-        susc: deltaAbs(camResults.baseline.chain?.avgSusceptibility, camResults.whatIf.chain?.avgSusceptibility),
-      },
-    };
-
-    return d;
-  }, [hasCam, camResults]);
-
   return (
     <div style={{ display: "grid", gap: 14 }}>
+      {/* Header */}
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 22, fontWeight: 980 }}>Results — Baseline vs What-If (FAIR-CAM)</div>
+            <div style={{ fontSize: 22, fontWeight: 980 }}>Results — FAIR analysis</div>
             <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8, lineHeight: 1.45 }}>
-              Baseline uses <strong>Implemented</strong> controls only. What-If uses Implemented + Proposed/Planned controls
-              marked <strong>Include in What-If</strong>. This supports decision-making without “pretending” controls are implemented.
+              This page shows <strong>FAIR outputs only</strong>: ALE/PEL quantiles + distribution charts. (Controls / What-If
+              are handled in the Dashboard.)
             </div>
 
             <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Badge tone="neutral">Baseline controls: {baselineControls.length}</Badge>
-              <Badge tone="neutral">What-If controls: {whatIfControls.length}</Badge>
-              {camResults?.lastRunAt ? <Badge tone="blue">Last run: {new Date(camResults.lastRunAt).toLocaleString()}</Badge> : null}
+              <Badge tone="neutral">Level: {q.level}</Badge>
               <Badge tone="neutral">Sims: {Number(q.sims || 10000).toLocaleString()}</Badge>
+              {q?.lastRunAt ? <Badge tone="blue">Last run: {new Date(q.lastRunAt).toLocaleString()}</Badge> : null}
+              <Badge tone="neutral">Seed: {seed}</Badge>
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <button className="btn" onClick={() => setActiveView?.("Treatments")}>
-              Back to Treatments
+            <button className="btn" onClick={() => setActiveView?.("Quantify")}>
+              Back to Quantify
             </button>
             <button className="btn" onClick={() => setSeed(Math.floor(Math.random() * 1e9))} disabled={running}>
               New seed
             </button>
-            <button className="btn primary" onClick={runBaselineVsWhatIf} disabled={running}>
-              {running ? "Running…" : "Run Baseline vs What-If"}
+            <button className="btn primary" onClick={runFairOnly} disabled={running}>
+              {running ? "Running…" : "Run FAIR simulation"}
             </button>
           </div>
         </div>
 
-               {progress ? (
+        {progress ? (
           <div style={{ marginTop: 10, fontSize: 12, opacity: 0.85 }}>
             Status: <strong>{progress}</strong>
           </div>
         ) : null}
+      </Card>
 
-        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-          Seed (for comparability): <strong>{seed}</strong>
+      {/* Input checks */}
+      {inputWarnings.length ? (
+        <Card>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ fontSize: 16, fontWeight: 950 }}>Input sanity checks</div>
+            <Badge tone="warn">{inputWarnings.length} warning(s)</Badge>
+          </div>
+
+          <div style={{ marginTop: 10, fontSize: 13, opacity: 0.88, lineHeight: 1.55 }}>
+            <div style={{ fontWeight: 900, marginBottom: 6 }}>Probabilities must be typed as 0..1</div>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {inputWarnings.map((w, i) => (
+                <li key={i} style={{ marginBottom: 6 }}>
+                  {w}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Card>
+      ) : null}
+
+      {/* Frequency summary (connect inputs to taxonomy) */}
+      <Card>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>Frequency summary (from your inputs, ML)</div>
+        <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85, lineHeight: 1.55 }}>
+          This is a “quick read” that helps you connect your scenario inputs to the FAIR frequency chain.
+        </div>
+
+        <Divider />
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <Badge tone="neutral">Level: {freqSummary.level}</Badge>
+          <Badge tone="neutral">
+            TEF (calc, ML): {freqSummary.tefCalcML === null ? "—" : fmtRate(freqSummary.tefCalcML)}
+          </Badge>
+          <Badge tone="neutral">
+            Susceptibility (calc, ML): {freqSummary.suscCalcML === null ? "—" : fmtProb(freqSummary.suscCalcML)}
+          </Badge>
+          <Badge tone="neutral">
+            LEF (calc, ML): {freqSummary.lefCalcML === null ? "—" : fmtRate(freqSummary.lefCalcML)}
+          </Badge>
+        </div>
+
+        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75, lineHeight: 1.5 }}>
+          Note: this uses the <strong>ML</strong> values only. The simulation uses min/ML/max to generate a distribution.
         </div>
       </Card>
 
-      {!hasCam ? (
+      {/* No results yet */}
+      {!hasResults ? (
         <Card>
-          <div style={{ fontSize: 16, fontWeight: 950 }}>No FAIR-CAM results yet</div>
-          <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13, lineHeight: 1.5 }}>
-            Click <strong>Run Baseline vs What-If</strong>. If you get an error, check missing inputs in{" "}
-            <strong>Quantify</strong>. Also ensure you have at least one <strong>Implemented</strong> control (baseline)
-            or at least one control flagged <strong>Include in What-If</strong>.
+          <div style={{ fontSize: 16, fontWeight: 950 }}>No FAIR results yet</div>
+          <div style={{ marginTop: 8, opacity: 0.85, fontSize: 13, lineHeight: 1.55 }}>
+            Click <strong>Run FAIR simulation</strong>. If you get an error, go to <strong>Quantify</strong> and complete the
+            missing min/ML/max inputs.
           </div>
         </Card>
       ) : (
         <>
-          {/* Summary: ALE baseline vs what-if */}
+          {/* Summary: ALE + PEL */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
             <Card>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 16, fontWeight: 950 }}>ALE — Baseline</div>
-                <Badge tone="neutral">{camResults.baseline.controlCount} control(s)</Badge>
-              </div>
+              <div style={{ fontSize: 16, fontWeight: 950 }}>Annual Loss Exposure (ALE)</div>
               <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                <StatLine label="P10" value={money(camResults.baseline.stats.ale.p10)} />
-                <StatLine label="P50" value={money(camResults.baseline.stats.ale.ml)} />
-                <StatLine label="P90" value={money(camResults.baseline.stats.ale.p90)} />
-              </div>
-
-              <Divider />
-
-              <div style={{ fontSize: 12, opacity: 0.75 }}>
-                Chain averages (per sim year):{" "}
-                <strong>{camResults.baseline.chain?.avgTEF?.toFixed?.(2) ?? "—"}</strong> TEF,{" "}
-                <strong>{camResults.baseline.chain?.avgSusceptibility?.toFixed?.(3) ?? "—"}</strong> Susc,{" "}
-                <strong>{camResults.baseline.chain?.avgLEF?.toFixed?.(2) ?? "—"}</strong> LEF
+                <StatLine label="P10" value={money(q.stats.ale.p10)} help="Low-end annual loss (10% of years are below this)." />
+                <StatLine label="P50" value={money(q.stats.ale.ml)} help="Typical annual loss (median)." />
+                <StatLine label="P90" value={money(q.stats.ale.p90)} help="High-end annual loss (90% of years are below this)." />
               </div>
             </Card>
 
             <Card>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 16, fontWeight: 950 }}>ALE — What-If</div>
-                <Badge tone="neutral">{camResults.whatIf.controlCount} control(s)</Badge>
-              </div>
+              <div style={{ fontSize: 16, fontWeight: 950 }}>Per-Event Loss (PEL)</div>
               <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                <StatLine label="P10" value={money(camResults.whatIf.stats.ale.p10)} />
-                <StatLine label="P50" value={money(camResults.whatIf.stats.ale.ml)} />
-                <StatLine label="P90" value={money(camResults.whatIf.stats.ale.p90)} />
+                <StatLine label="P10" value={money(q.stats.pel.p10)} />
+                <StatLine label="P50" value={money(q.stats.pel.ml)} />
+                <StatLine label="P90" value={money(q.stats.pel.p90)} />
               </div>
-
-              <Divider />
-
-              <div style={{ fontSize: 12, opacity: 0.75 }}>
-                Chain averages (per sim year):{" "}
-                <strong>{camResults.whatIf.chain?.avgTEF?.toFixed?.(2) ?? "—"}</strong> TEF,{" "}
-                <strong>{camResults.whatIf.chain?.avgSusceptibility?.toFixed?.(3) ?? "—"}</strong> Susc,{" "}
-                <strong>{camResults.whatIf.chain?.avgLEF?.toFixed?.(2) ?? "—"}</strong> LEF
+              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75, lineHeight: 1.45 }}>
+                PEL is the loss amount <strong>when a loss event happens</strong>. ALE is the distribution of total loss per year.
               </div>
             </Card>
           </div>
 
-          {/* Summary: PEL baseline vs what-if */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
-            <Card>
-              <div style={{ fontSize: 16, fontWeight: 950 }}>PEL — Baseline</div>
-              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                <StatLine label="P10" value={money(camResults.baseline.stats.pel.p10)} />
-                <StatLine label="P50" value={money(camResults.baseline.stats.pel.ml)} />
-                <StatLine label="P90" value={money(camResults.baseline.stats.pel.p90)} />
-              </div>
-            </Card>
-
-            <Card>
-              <div style={{ fontSize: 16, fontWeight: 950 }}>PEL — What-If</div>
-              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                <StatLine label="P10" value={money(camResults.whatIf.stats.pel.p10)} />
-                <StatLine label="P50" value={money(camResults.whatIf.stats.pel.ml)} />
-                <StatLine label="P90" value={money(camResults.whatIf.stats.pel.p90)} />
-              </div>
-            </Card>
-          </div>
-
-          {/* Deltas */}
-          <Card>
-            <div style={{ fontSize: 16, fontWeight: 950 }}>Delta (What-If − Baseline)</div>
-            <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85, lineHeight: 1.5 }}>
-              Negative € deltas are good (risk reduction). “Reduction %” is relative to baseline (positive = improvement).
-            </div>
-
-            <Divider />
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <Card style={{ padding: 12 }}>
-                <div style={{ fontWeight: 950, marginBottom: 8 }}>ALE deltas</div>
-                <div style={{ display: "grid", gap: 10 }}>
-                  <StatLine
-                    label="Δ P50"
-                    value={money(deltas.ale.p50)}
-                    help={deltas.ale.redP50 === null ? null : `Reduction: ${pct(deltas.ale.redP50)}`}
-                  />
-                  <StatLine
-                    label="Δ P90"
-                    value={money(deltas.ale.p90)}
-                    help={deltas.ale.redP90 === null ? null : `Reduction: ${pct(deltas.ale.redP90)}`}
-                  />
-                </div>
-              </Card>
-
-              <Card style={{ padding: 12 }}>
-                <div style={{ fontWeight: 950, marginBottom: 8 }}>PEL deltas</div>
-                <div style={{ display: "grid", gap: 10 }}>
-                  <StatLine
-                    label="Δ P50"
-                    value={money(deltas.pel.p50)}
-                    help={deltas.pel.redP50 === null ? null : `Reduction: ${pct(deltas.pel.redP50)}`}
-                  />
-                  <StatLine
-                    label="Δ P90"
-                    value={money(deltas.pel.p90)}
-                    help={deltas.pel.redP90 === null ? null : `Reduction: ${pct(deltas.pel.redP90)}`}
-                  />
-                </div>
-              </Card>
-            </div>
-
-            <Divider />
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
-              <Card style={{ padding: 12 }}>
-                <div style={{ fontWeight: 950 }}>Avg TEF (delta)</div>
-                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
-                  {Number.isFinite(deltas.chain.tef) ? deltas.chain.tef.toFixed(3) : "—"} / year
-                </div>
-              </Card>
-              <Card style={{ padding: 12 }}>
-                <div style={{ fontWeight: 950 }}>Avg Susceptibility (delta)</div>
-                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
-                  {Number.isFinite(deltas.chain.susc) ? deltas.chain.susc.toFixed(4) : "—"}
-                </div>
-              </Card>
-              <Card style={{ padding: 12 }}>
-                <div style={{ fontWeight: 950 }}>Avg LEF (delta)</div>
-                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
-                  {Number.isFinite(deltas.chain.lef) ? deltas.chain.lef.toFixed(3) : "—"} / year
-                </div>
-              </Card>
-            </div>
-          </Card>
-
-          {/* Charts */}
+          {/* Charts: ALE histogram + ALE exceedance */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
             <Histogram
-              title="Annual Loss — Baseline"
-              subtitle="Distribution of annual loss (Implemented controls only)."
-              values={camResults.baseline.aleSamples}
+              title="Histogram — Annual Loss (ALE)"
+              subtitle="How annual losses cluster across simulation years."
+              values={q.aleSamples}
             />
-            <Histogram
-              title="Annual Loss — What-If"
-              subtitle="Distribution of annual loss (Implemented + simulated controls)."
-              values={camResults.whatIf.aleSamples}
+            <ExceedanceCurve
+              title="Exceedance — Annual Loss (ALE)"
+              subtitle="P(Annual Loss > x) across simulation years."
+              curve={q.curve}
             />
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
-            <ExceedanceCurve
-              title="Exceedance — Baseline"
-              subtitle="P(Annual Loss > x) with Implemented controls."
-              curve={camResults.baseline.curve}
-            />
-            <ExceedanceCurve
-              title="Exceedance — What-If"
-              subtitle="P(Annual Loss > x) with Implemented + simulated controls."
-              curve={camResults.whatIf.curve}
+          {/* Optional: PEL histogram */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 14, alignItems: "start" }}>
+            <Histogram
+              title="Histogram — Per-Event Loss (PEL)"
+              subtitle="Distribution of loss size per event."
+              values={q.pelSamples}
+              bins={24}
             />
           </div>
         </>
