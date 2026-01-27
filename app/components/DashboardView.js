@@ -568,7 +568,7 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
     return out;
   }, [vendors, q, showOnlyCarry, onlyTier1, onlyReadyScenarios, sortBy]);
 
-  const totals = useMemo(() => {
+   const totals = useMemo(() => {
     const list = Array.isArray(vendors) ? vendors : [];
     let scenarios = 0;
     let ready = 0;
@@ -577,14 +577,41 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
     for (const v of list) {
       const scs = Array.isArray(v?.scenarios) ? v.scenarios : [];
       scenarios += scs.length;
+
       for (const s of scs) {
         const st = scenarioStatus(s);
         if (st === "Ready") ready++;
         else missing++;
       }
     }
+
     return { vendors: list.length, scenarios, ready, missing };
   }, [vendors]);
+
+  const scenarioRows = useMemo(() => {
+    const list = Array.isArray(vendors) ? vendors : [];
+    const rows = [];
+
+    for (const v of list) {
+      const scs = Array.isArray(v?.scenarios) ? v.scenarios : [];
+      for (const s of scs) rows.push(scenarioToRow(v, s));
+    }
+
+    return rows;
+  }, [vendors]);
+
+  const portfolio = useMemo(() => {
+    const readyRows = scenarioRows.filter(
+      (r) => r.status === "Ready" && isFinitePos(r.aleP90)
+    );
+
+    const sorted = [...readyRows].sort((a, b) => (b.aleP90 ?? -1) - (a.aleP90 ?? -1));
+
+    const worst = sorted[0] || null;
+    const top10 = sorted.slice(0, 10);
+
+    return { worst, top10, readyCount: readyRows.length };
+  }, [scenarioRows]);
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
