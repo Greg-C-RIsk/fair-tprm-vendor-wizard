@@ -418,6 +418,8 @@ export default function ResultsView({ vendor, scenario, updateVendor, setActiveV
   // --- Input sanity checks (probabilities must be 0..1)
   const inputWarnings = useMemo(() => {
     const warnings = [];
+    const lefML = toNum(q?.lef?.ml);
+const lefHuman = useMemo(() => lefToHuman(lefML), [lefML]);
 
     // Only probabilities:
     // - Contact Frequency: Probability of Action must be 0..1
