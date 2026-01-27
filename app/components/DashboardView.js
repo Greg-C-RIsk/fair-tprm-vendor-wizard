@@ -2,6 +2,18 @@
 
 import { useMemo, useState } from "react";
 import { emptyTiering, tierIndex } from "../../lib/model";
+import { deriveSusceptibility as deriveSuscEngine } from "../../lib/fairEngine";
+
+function toNum(x) {
+  if (x === null || x === undefined) return null;
+  const n = Number(String(x).replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+function clamp01(x) {
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(1, x));
+}
 
 function moneyEUR(n) {
   if (!Number.isFinite(n)) return "—";
@@ -136,51 +148,118 @@ function scenarioStatus(s) {
 function getScenarioAle(q) {
   const ale = q?.stats?.ale;
   if (!ale) return null;
-  return {
-    p50: ale.ml,
-    p90: ale.p90,
-    p10: ale.p10,
-    min: ale.min,
-    max: ale.max,
-  };
+  return { p50: ale.ml, p90: ale.p90, p10: ale.p10, min: ale.min, max: ale.max };
 }
 
-/**
- * Mini sparkline for ALE samples (exceedance curve style).
- * - X axis = loss (EUR)
- * - Y axis = exceedance probability (P(Loss > x))
- * Hover shows exact (approx) value.
- */
-function Sparkline({ values, width = 240, height = 54 }) {
+// -----------------------------
+// FAIR summary (TEF / Susc / LEF)
+// -----------------------------
+function interpretPoa(x) {
+  // In FAIR engine, PoA is treated as % (0..100), but your UI sometimes labels 0..1.
+  // We support both:
+  // - if value <= 1 -> treat as 0..1
+  // - if value > 1 -> treat as percent -> /100
+  if (x === null) return null;
+  if (x <= 1) return clamp01(x);
+  return clamp01(x / 100);
+}
+
+function interpretSusc(x) {
+  // Support both 0..1 and 0..100
+  if (x === null) return null;
+  if (x <= 1) return clamp01(x);
+  return clamp01(x / 100);
+}
+
+function fairSummaryFromQuant(q) {
+  const level = q?.level || "LEF";
+
+  const lefML = toNum(q?.lef?.ml);
+  const tefML_direct = toNum(q?.tef?.ml);
+
+  const cfML = toNum(q?.contactFrequency?.ml);
+  const poaML_raw = toNum(q?.probabilityOfAction?.ml);
+  const poaML = interpretPoa(poaML_raw);
+
+  const tcML = toNum(q?.threatCapacity?.ml);
+  const rsML = toNum(q?.resistanceStrength?.ml);
+
+  const suscMode = q?.susceptibilityMode || "Direct";
+  const suscDirectML = interpretSusc(toNum(q?.susceptibility?.ml));
+
+  let tefML = null;
+  let suscML = null;
+  let lefCalcML = null;
+
+  if (level === "LEF") {
+    tefML = null;
+    suscML = null;
+    lefCalcML = lefML;
+  } else if (level === "TEF") {
+    tefML = tefML_direct;
+
+    if (suscMode === "Direct") {
+      suscML = suscDirectML;
+    } else {
+      if (tcML !== null && rsML !== null) {
+        suscML = clamp01(deriveSuscEngine(tcML, rsML));
+      }
+    }
+
+    if (tefML !== null && suscML !== null) lefCalcML = tefML * suscML;
+  } else if (level === "Contact Frequency") {
+    if (cfML !== null && poaML !== null) tefML = cfML * poaML;
+
+    if (suscMode === "Direct") {
+      suscML = suscDirectML;
+    } else {
+      if (tcML !== null && rsML !== null) {
+        suscML = clamp01(deriveSuscEngine(tcML, rsML));
+      }
+    }
+
+    if (tefML !== null && suscML !== null) lefCalcML = tefML * suscML;
+  }
+
+  return { level, tefML, suscML, lefCalcML };
+}
+
+function fmtRate(n) {
+  if (!Number.isFinite(n)) return "—";
+  return n.toFixed(2);
+}
+
+function fmtProb(n) {
+  if (!Number.isFinite(n)) return "—";
+  return n.toFixed(3);
+}
+
+// -----------------------------
+// Sparkline types
+// -----------------------------
+function SparklineExceedance({ values, width = 240, height = 54 }) {
   const [hover, setHover] = useState(null);
 
   const data = useMemo(() => {
     if (!Array.isArray(values) || values.length < 20) return null;
     const sorted = [...values].sort((a, b) => a - b);
 
-    // downsample using quantiles (keeps shape)
     const points = 36;
     const pts = [];
     for (let i = 0; i < points; i++) {
       const q = i / (points - 1);
       const idx = Math.min(sorted.length - 1, Math.floor(q * (sorted.length - 1)));
       const x = sorted[idx];
-      const exceed = 1 - q; // exceedance curve
+      const exceed = 1 - q;
       pts.push({ x, exceed });
     }
 
-    const minX = pts[0].x;
-    const maxX = pts[pts.length - 1].x;
-    return { pts, minX, maxX };
+    return { pts, minX: pts[0].x, maxX: pts[pts.length - 1].x };
   }, [values]);
 
   if (!data) return null;
 
-  const padL = 8;
-  const padR = 8;
-  const padT = 6;
-  const padB = 10;
-
+  const padL = 8, padR = 8, padT = 6, padB = 10;
   const innerW = Math.max(1, width - padL - padR);
   const innerH = Math.max(1, height - padT - padB);
 
@@ -189,9 +268,7 @@ function Sparkline({ values, width = 240, height = 54 }) {
     return padL + ((x - data.minX) / span) * innerW;
   };
 
-  const mapY = (exceed) => {
-    return padT + (1 - exceed) * innerH; // exceed=1 => top ; exceed=0 => bottom
-  };
+  const mapY = (exceed) => padT + (1 - exceed) * innerH;
 
   const d = data.pts
     .map((p, i) => `${i === 0 ? "M" : "L"} ${mapX(p.x).toFixed(2)} ${mapY(p.exceed).toFixed(2)}`)
@@ -200,70 +277,43 @@ function Sparkline({ values, width = 240, height = 54 }) {
   const onMove = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const xPx = e.clientX - rect.left;
-
     const t = Math.max(0, Math.min(1, (xPx - padL) / Math.max(1, innerW)));
     const i = Math.round(t * (data.pts.length - 1));
     const p = data.pts[Math.max(0, Math.min(data.pts.length - 1, i))];
 
-    setHover({
-      x: mapX(p.x),
-      y: mapY(p.exceed),
-      loss: p.x,
-      exceed: p.exceed,
-    });
+    setHover({ x: mapX(p.x), y: mapY(p.exceed), loss: p.x, exceed: p.exceed });
   };
-
-  const onLeave = () => setHover(null);
 
   return (
     <div style={{ marginTop: 8 }}>
       <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900, marginBottom: 6 }}>
-        Mini exceedance curve (ALE)
+        Mini curve: Exceedance (ALE)
       </div>
 
-      <div
-        style={{
-          border: "1px solid rgba(255,255,255,0.10)",
-          borderRadius: 12,
-          padding: 8,
-          position: "relative",
-        }}
-      >
+      <div style={{ border: "1px solid rgba(255,255,255,0.10)", borderRadius: 12, padding: 8, position: "relative" }}>
         <svg
           width="100%"
           viewBox={`0 0 ${width} ${height}`}
           onMouseMove={onMove}
-          onMouseLeave={onLeave}
+          onMouseLeave={() => setHover(null)}
           style={{ display: "block", cursor: "crosshair" }}
         >
-          {/* axes */}
           <path
             d={`M ${padL} ${padT} L ${padL} ${height - padB} L ${width - padR} ${height - padB}`}
             stroke="currentColor"
             opacity="0.20"
             fill="none"
           />
-
-          {/* curve */}
           <path d={d} stroke="currentColor" strokeWidth="2" fill="none" opacity="0.9" />
 
-          {/* hover dot */}
           {hover ? (
             <>
-              <line
-                x1={hover.x}
-                y1={padT}
-                x2={hover.x}
-                y2={height - padB}
-                stroke="currentColor"
-                opacity="0.15"
-              />
+              <line x1={hover.x} y1={padT} x2={hover.x} y2={height - padB} stroke="currentColor" opacity="0.15" />
               <circle cx={hover.x} cy={hover.y} r="3.5" fill="currentColor" opacity="0.95" />
             </>
           ) : null}
         </svg>
 
-        {/* hover tooltip */}
         {hover ? (
           <div
             style={{
@@ -281,9 +331,7 @@ function Sparkline({ values, width = 240, height = 54 }) {
             }}
           >
             <div style={{ fontWeight: 900 }}>{moneyEUR(hover.loss)}</div>
-            <div style={{ opacity: 0.85 }}>
-              P(Loss &gt; x): {(hover.exceed * 100).toFixed(1)}%
-            </div>
+            <div style={{ opacity: 0.85 }}>P(Loss &gt; x): {(hover.exceed * 100).toFixed(1)}%</div>
           </div>
         ) : null}
 
@@ -291,30 +339,155 @@ function Sparkline({ values, width = 240, height = 54 }) {
           <span>{moneyEUR(data.minX)}</span>
           <span>{moneyEUR(data.maxX)}</span>
         </div>
+      </div>
+    </div>
+  );
+}
 
-        <div style={{ fontSize: 11, opacity: 0.7, marginTop: 6 }}>
-          This shows the shape of the annual loss distribution: as x increases, exceedance probability decreases.
+function SparklineHistogram({ values, width = 240, height = 54 }) {
+  const [hover, setHover] = useState(null);
+
+  const data = useMemo(() => {
+    if (!Array.isArray(values) || values.length < 20) return null;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const bins = 16;
+    const span = Math.max(1e-9, max - min);
+
+    const counts = Array.from({ length: bins }, () => 0);
+    for (const v of values) {
+      const i = Math.min(bins - 1, Math.floor(((v - min) / span) * bins));
+      counts[i]++;
+    }
+    const peak = Math.max(...counts);
+    return { min, max, bins, counts, peak, total: values.length };
+  }, [values]);
+
+  if (!data) return null;
+
+  const padL = 8, padR = 8, padT = 6, padB = 10;
+  const innerW = Math.max(1, width - padL - padR);
+  const innerH = Math.max(1, height - padT - padB);
+  const barW = innerW / data.bins;
+
+  const onMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const xPx = e.clientX - rect.left;
+    const i = Math.max(0, Math.min(data.bins - 1, Math.floor((xPx - padL) / Math.max(1, barW))));
+    const lo = data.min + (i / data.bins) * (data.max - data.min);
+    const hi = data.min + ((i + 1) / data.bins) * (data.max - data.min);
+    const c = data.counts[i] || 0;
+
+    setHover({
+      i,
+      x: padL + i * barW + barW / 2,
+      count: c,
+      lo,
+      hi,
+      pct: (c / Math.max(1, data.total)) * 100,
+    });
+  };
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900, marginBottom: 6 }}>
+        Mini chart: Histogram (ALE)
+      </div>
+
+      <div style={{ border: "1px solid rgba(255,255,255,0.10)", borderRadius: 12, padding: 8, position: "relative" }}>
+        <svg
+          width="100%"
+          viewBox={`0 0 ${width} ${height}`}
+          onMouseMove={onMove}
+          onMouseLeave={() => setHover(null)}
+          style={{ display: "block", cursor: "crosshair" }}
+        >
+          <path
+            d={`M ${padL} ${padT} L ${padL} ${height - padB} L ${width - padR} ${height - padB}`}
+            stroke="currentColor"
+            opacity="0.20"
+            fill="none"
+          />
+
+          {data.counts.map((c, i) => {
+            const h = (c / Math.max(1, data.peak)) * innerH;
+            const x = padL + i * barW + 1;
+            const y = padT + (innerH - h);
+            const w = Math.max(1, barW - 2);
+            return (
+              <rect
+                key={i}
+                x={x}
+                y={y}
+                width={w}
+                height={h}
+                fill="currentColor"
+                opacity="0.65"
+                rx="2"
+              />
+            );
+          })}
+
+          {hover ? (
+            <>
+              <line x1={hover.x} y1={padT} x2={hover.x} y2={height - padB} stroke="currentColor" opacity="0.15" />
+            </>
+          ) : null}
+        </svg>
+
+        {hover ? (
+          <div
+            style={{
+              position: "absolute",
+              left: Math.min(Math.max(0, hover.x), width - 1),
+              top: 0,
+              transform: "translate(-50%, -6px)",
+              background: "rgba(0,0,0,0.75)",
+              border: "1px solid rgba(255,255,255,0.18)",
+              borderRadius: 10,
+              padding: "6px 8px",
+              fontSize: 12,
+              pointerEvents: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <div style={{ fontWeight: 900 }}>
+              {moneyEUR(hover.lo)} → {moneyEUR(hover.hi)}
+            </div>
+            <div style={{ opacity: 0.85 }}>
+              {hover.count} samples ({hover.pct.toFixed(1)}%)
+            </div>
+          </div>
+        ) : null}
+
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, opacity: 0.7 }}>
+          <span>{moneyEUR(data.min)}</span>
+          <span>{moneyEUR(data.max)}</span>
         </div>
       </div>
     </div>
   );
 }
 
+// -----------------------------
+// Main
+// -----------------------------
 export default function DashboardView({ vendors, setActiveView, selectVendor, selectScenario }) {
   const [q, setQ] = useState("");
   const [showOnlyCarry, setShowOnlyCarry] = useState(false);
 
-  // ✅ NEW filters
   const [onlyTier1, setOnlyTier1] = useState(false);
   const [onlyReadyScenarios, setOnlyReadyScenarios] = useState(false);
 
   const [sortBy, setSortBy] = useState("Worst ALE p90");
 
+  // ✅ NEW: sparkline toggle
+  const [sparkType, setSparkType] = useState("Exceedance"); // "Exceedance" | "Histogram"
+
   const rows = useMemo(() => {
     const list = Array.isArray(vendors) ? vendors : [];
     const needle = q.trim().toLowerCase();
 
-    // helper for effective tier
     const effectiveTierOf = (v) => {
       const idx = tierIndex(v?.tiering || emptyTiering());
       const suggested = suggestTierFromIndex(idx);
@@ -323,11 +496,8 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
 
     let out = list.filter((v) => {
       if (showOnlyCarry && !v?.carryForward) return false;
-
-      // ✅ Filter: only Tier 1 vendors
       if (onlyTier1 && effectiveTierOf(v) !== "Tier 1") return false;
 
-      // search
       if (needle) {
         const ok =
           (v?.name || "").toLowerCase().includes(needle) ||
@@ -336,7 +506,6 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
         if (!ok) return false;
       }
 
-      // ✅ Filter: only vendors with at least 1 READY scenario
       if (onlyReadyScenarios) {
         const scs = Array.isArray(v?.scenarios) ? v.scenarios : [];
         return scs.some((s) => scenarioStatus(s) === "Ready");
@@ -396,7 +565,7 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
           <div>
             <div style={{ fontSize: 20, fontWeight: 950 }}>Dashboard</div>
             <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>
-              Portfolio overview: tiering + FAIR scenario results (training-friendly).
+              Portfolio overview: tiering + FAIR scenario outputs (training-friendly).
             </div>
 
             <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -407,7 +576,7 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
             </div>
           </div>
 
-          <div style={{ display: "grid", gap: 10, minWidth: 360 }}>
+          <div style={{ display: "grid", gap: 10, minWidth: 420 }}>
             <input
               className="input"
               value={q}
@@ -421,7 +590,6 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                 Carry-forward only
               </label>
 
-              {/* ✅ NEW filters */}
               <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, opacity: 0.9 }}>
                 <input type="checkbox" checked={onlyTier1} onChange={(e) => setOnlyTier1(e.target.checked)} />
                 Show only Tier 1 vendors
@@ -442,6 +610,28 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                 <option>Tier</option>
                 <option>Most scenarios</option>
               </select>
+            </div>
+
+            {/* ✅ NEW: Sparkline type toggle */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Sparkline type</div>
+              <button
+                className={sparkType === "Exceedance" ? "btn primary" : "btn"}
+                onClick={() => setSparkType("Exceedance")}
+                type="button"
+              >
+                Exceedance
+              </button>
+              <button
+                className={sparkType === "Histogram" ? "btn primary" : "btn"}
+                onClick={() => setSparkType("Histogram")}
+                type="button"
+              >
+                Histogram
+              </button>
+              <div style={{ fontSize: 12, opacity: 0.7 }}>
+                (Shown per scenario)
+              </div>
             </div>
           </div>
         </div>
@@ -464,7 +654,6 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
 
           const allScs = Array.isArray(v?.scenarios) ? v.scenarios : [];
           const scs = onlyReadyScenarios ? allScs.filter((s) => scenarioStatus(s) === "Ready") : allScs;
-
           const readyCount = allScs.filter((s) => scenarioStatus(s) === "Ready").length;
 
           // Vendor “headline”: worst p90
@@ -502,15 +691,9 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
               <div style={{ height: 1, background: "rgba(255,255,255,0.10)", margin: "12px 0" }} />
 
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <Pill>
-                  Scenarios: <strong>{allScs.length}</strong>
-                </Pill>
-                <Pill>
-                  Ready: <strong>{readyCount}</strong>
-                </Pill>
-                <Pill>
-                  Suggested: <strong>{suggested.tier}</strong>
-                </Pill>
+                <Pill>Scenarios: <strong>{allScs.length}</strong></Pill>
+                <Pill>Ready: <strong>{readyCount}</strong></Pill>
+                <Pill>Suggested: <strong>{suggested.tier}</strong></Pill>
               </div>
 
               <div style={{ marginTop: 12 }}>
@@ -547,6 +730,7 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                     {scs.map((s) => {
                       const st = scenarioStatus(s);
                       const ale = getScenarioAle(s?.quant);
+                      const fair = fairSummaryFromQuant(s?.quant || {});
 
                       return (
                         <div
@@ -571,6 +755,13 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                             <Pill>Last run: {fmtDate(s?.quant?.lastRunAt)}</Pill>
                           </div>
 
+                          {/* ✅ NEW: FAIR calculated summary */}
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <Pill>TEF (calc, ML): <strong>{fair.tefML === null ? "—" : fmtRate(fair.tefML)}</strong></Pill>
+                            <Pill>Susceptibility (calc, ML): <strong>{fair.suscML === null ? "—" : fmtProb(fair.suscML)}</strong></Pill>
+                            <Pill>LEF (calc, ML): <strong>{fair.lefCalcML === null ? "—" : fmtRate(fair.lefCalcML)}</strong></Pill>
+                          </div>
+
                           {ale ? (
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                               <Pill>ALE p10: {moneyEUR(ale.p10)}</Pill>
@@ -583,12 +774,16 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                             </div>
                           )}
 
-                          {/* ✅ NEW: sparkline per scenario */}
+                          {/* ✅ NEW: Sparkline type switch */}
                           {Array.isArray(s?.quant?.aleSamples) && s.quant.aleSamples.length ? (
-                            <Sparkline values={s.quant.aleSamples} />
+                            sparkType === "Histogram" ? (
+                              <SparklineHistogram values={s.quant.aleSamples} />
+                            ) : (
+                              <SparklineExceedance values={s.quant.aleSamples} />
+                            )
                           ) : null}
 
-                          {/* Optional navigation buttons */}
+                          {/* Navigation buttons */}
                           {(setActiveView || selectVendor || selectScenario) ? (
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
                               <button
@@ -630,9 +825,7 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                     })}
 
                     {scs.length === 0 ? (
-                      <div style={{ fontSize: 13, opacity: 0.8 }}>
-                        No scenarios to show for this filter.
-                      </div>
+                      <div style={{ fontSize: 13, opacity: 0.8 }}>No scenarios to show for this filter.</div>
                     ) : null}
                   </div>
                 </details>
@@ -645,8 +838,9 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
       <Card>
         <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Teaching note</div>
         <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85, lineHeight: 1.5 }}>
-          The mini sparkline is an exceedance curve preview for annual loss exposure (ALE). Hover to see approximate values.
-          Use filters to focus on Tier 1 vendors and scenarios that are fully “Ready” (inputs + simulation results).
+          The sparklines visualize the annual loss distribution (ALE) per scenario. Use <strong>Exceedance</strong> to see
+          “P(Loss &gt; x)” or <strong>Histogram</strong> to see how simulations cluster into ranges. The FAIR summary shows the
+          calculated TEF / Susceptibility / LEF (ML) so learners can connect results back to the FAIR frequency taxonomy.
         </div>
       </Card>
     </div>
