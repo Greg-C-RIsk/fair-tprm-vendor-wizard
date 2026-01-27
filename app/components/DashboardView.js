@@ -692,6 +692,143 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
         </div>
       </Card>
 
+      {/* ✅ NEW: Portfolio - Max Scenario */}
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 950 }}>Portfolio — Max scenario (worst ALE p90)</div>
+            <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>
+              Worst-case view across all vendors (only scenarios with results).
+            </div>
+
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Pill>Ready scenarios: <strong>{portfolio.readyCount}</strong></Pill>
+              <Pill>Top shown: <strong>{Math.min(10, portfolio.top10.length)}</strong></Pill>
+            </div>
+          </div>
+
+          {portfolio.worst ? (
+            <div style={{ display: "grid", gap: 8, justifyItems: "end" }}>
+              <Pill>
+                Worst p90: <strong>{moneyEUR(portfolio.worst.aleP90)}</strong>
+              </Pill>
+              <div style={{ fontSize: 12, opacity: 0.8, textAlign: "right" }}>
+                {portfolio.worst.vendorName} — {portfolio.worst.scenarioTitle}
+              </div>
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    selectVendor?.(portfolio.worst.vendorId);
+                    selectScenario?.(portfolio.worst.scenarioId);
+                    setActiveView?.("Scenarios");
+                  }}
+                >
+                  Open →
+                </button>
+
+                <button
+                  className="btn"
+                  onClick={() => {
+                    selectVendor?.(portfolio.worst.vendorId);
+                    selectScenario?.(portfolio.worst.scenarioId);
+                    setActiveView?.("Quantify");
+                  }}
+                >
+                  Quantify →
+                </button>
+
+                <button
+                  className="btn primary"
+                  onClick={() => {
+                    selectVendor?.(portfolio.worst.vendorId);
+                    selectScenario?.(portfolio.worst.scenarioId);
+                    setActiveView?.("Results");
+                  }}
+                >
+                  Results →
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, opacity: 0.8 }}>No ready scenarios with results yet.</div>
+          )}
+        </div>
+
+        <div style={{ height: 1, background: "rgba(255,255,255,0.10)", margin: "12px 0" }} />
+
+        {portfolio.top10.length ? (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead style={{ opacity: 0.8 }}>
+                <tr>
+                  <th style={{ textAlign: "left", padding: "8px 6px" }}>Vendor</th>
+                  <th style={{ textAlign: "left", padding: "8px 6px" }}>Tier</th>
+                  <th style={{ textAlign: "left", padding: "8px 6px" }}>Scenario</th>
+                  <th style={{ textAlign: "right", padding: "8px 6px" }}>ALE p50</th>
+                  <th style={{ textAlign: "right", padding: "8px 6px" }}>ALE p90</th>
+                  <th style={{ textAlign: "left", padding: "8px 6px" }}>Last run</th>
+                  <th style={{ textAlign: "right", padding: "8px 6px" }}>Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {portfolio.top10.map((r) => (
+                  <tr
+                    key={r.vendorId + "_" + r.scenarioId}
+                    style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
+                  >
+                    <td style={{ padding: "8px 6px" }}>{r.vendorName}</td>
+                    <td style={{ padding: "8px 6px" }}>{r.tier}</td>
+                    <td style={{ padding: "8px 6px" }}>{r.scenarioTitle}</td>
+                    <td style={{ padding: "8px 6px", textAlign: "right" }}>{moneyEUR(r.aleP50)}</td>
+                    <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 950 }}>
+                      {moneyEUR(r.aleP90)}
+                    </td>
+                    <td style={{ padding: "8px 6px" }}>{fmtDate(r.lastRunAt)}</td>
+                    <td style={{ padding: "8px 6px", textAlign: "right" }}>
+                      <button
+                        className="btn"
+                        onClick={() => {
+                          selectVendor?.(r.vendorId);
+                          selectScenario?.(r.scenarioId);
+                          setActiveView?.("Scenarios");
+                        }}
+                      >
+                        Open
+                      </button>{" "}
+                      <button
+                        className="btn"
+                        onClick={() => {
+                          selectVendor?.(r.vendorId);
+                          selectScenario?.(r.scenarioId);
+                          setActiveView?.("Quantify");
+                        }}
+                      >
+                        Quantify
+                      </button>{" "}
+                      <button
+                        className="btn primary"
+                        onClick={() => {
+                          selectVendor?.(r.vendorId);
+                          selectScenario?.(r.scenarioId);
+                          setActiveView?.("Results");
+                        }}
+                      >
+                        Results
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, opacity: 0.8 }}>No scenarios with results yet.</div>
+        )}
+      </Card>
+
       {/* Cards grid */}
       <div
         style={{
