@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ensureQuant, runFairMonteCarlo, deriveSusceptibility, clamp01 } from "../../lib/fairEngine";
+import { ensureQuant, runFairMonteCarlo } from "../../lib/fairEngine";
 
 /**
  * ResultsView — FAIR only
@@ -35,10 +35,6 @@ function Card({ children, style }) {
       {children}
     </div>
   );
-}
-
-function Divider() {
-  return <div style={{ height: 1, background: "rgba(255,255,255,0.10)", margin: "12px 0" }} />;
 }
 
 function Badge({ children, tone = "neutral" }) {
@@ -178,6 +174,7 @@ function Histogram({ title, subtitle, values, bins = 28 }) {
 function ExceedanceCurve({ title, subtitle, curve }) {
   const [hover, setHover] = useState(null);
   const svgRef = useRef(null);
+  const rafRef = useRef(null);
 
   const pts = curve?.pts || [];
   if (!pts.length) return null;
@@ -200,87 +197,61 @@ function ExceedanceCurve({ title, subtitle, curve }) {
     .map((p, i) => `${i === 0 ? "M" : "L"} ${mapX(p.x).toFixed(2)} ${mapY(p.exceed).toFixed(2)}`)
     .join(" ");
 
-  const rafRef = useRef(null);
-
-const pickNearestPoint = (domainX) => {
-  // curve.pts est trié par x (car vient de sorted quantiles)
-  // On fait une recherche “rapide” plutôt qu’une boucle complète.
-  let lo = 0;
-  let hi = pts.length - 1;
-
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (pts[mid].x < domainX) lo = mid;
-    else hi = mid;
-  }
-
-  const a = pts[lo];
-  const b = pts[hi];
-  return Math.abs(a.x - domainX) <= Math.abs(b.x - domainX) ? a : b;
-};
-
+  // Interpolation: y follows cursor smoothly (point follows mouse)
   const interpolateAtX = (domainX) => {
-  if (!pts?.length) return null;
+    if (!pts.length) return null;
 
-  // si on est hors plage, on colle aux extrêmes
-  if (domainX <= pts[0].x) return { x: pts[0].x, exceed: pts[0].exceed };
-  if (domainX >= pts[pts.length - 1].x) return { x: pts[pts.length - 1].x, exceed: pts[pts.length - 1].exceed };
+    if (domainX <= pts[0].x) return { x: pts[0].x, exceed: pts[0].exceed };
+    if (domainX >= pts[pts.length - 1].x) return { x: pts[pts.length - 1].x, exceed: pts[pts.length - 1].exceed };
 
-  // on cherche les 2 points "encadrants" (a et b) autour de domainX
-  let lo = 0;
-  let hi = pts.length - 1;
+    let lo = 0;
+    let hi = pts.length - 1;
 
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (pts[mid].x <= domainX) lo = mid;
-    else hi = mid;
-  }
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (pts[mid].x <= domainX) lo = mid;
+      else hi = mid;
+    }
 
-  const a = pts[lo];
-  const b = pts[lo + 1];
-  const span = Math.max(1e-9, b.x - a.x);
-  const t = (domainX - a.x) / span;
+    const a = pts[lo];
+    const b = pts[lo + 1];
+    const span = Math.max(1e-9, b.x - a.x);
+    const t = (domainX - a.x) / span;
 
-  // interpolation linéaire sur "exceed"
-  const exceed = a.exceed + t * (b.exceed - a.exceed);
+    const exceed = a.exceed + t * (b.exceed - a.exceed);
+    return { x: domainX, exceed };
+  };
 
-  // IMPORTANT: x = domainX (le curseur), pas a.x ou b.x
-  return { x: domainX, exceed };
-};
-  
-const onPointerMove = (e) => {
-  const svg = svgRef.current;
-  if (!svg) return;
+  const onPointerMove = (e) => {
+    const svg = svgRef.current;
+    if (!svg) return;
 
-  // throttle via RAF => plus fluide / plus réactif
-  if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
 
-  rafRef.current = requestAnimationFrame(() => {
-    const rect = svg.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
+    rafRef.current = requestAnimationFrame(() => {
+      const rect = svg.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
 
-    // Convertit la position souris -> “x” dans le domaine (loss threshold)
-    const t = (mx - padL) / Math.max(1e-9, W - padL - padR);
-    const clampedT = Math.max(0, Math.min(1, t));
-    const domainX = minX + clampedT * (maxX - minX);
+      const t = (mx - padL) / Math.max(1e-9, W - padL - padR);
+      const clampedT = Math.max(0, Math.min(1, t));
+      const domainX = minX + clampedT * (maxX - minX);
 
-   const p = interpolateAtX(domainX);
-if (!p) return;
+      const p = interpolateAtX(domainX);
+      if (!p) return;
 
-// Le point suit exactement le curseur (x = domainX)
-setHover({
-  ...p,
-  xPx: mapX(p.x),
-  yPx: mapY(p.exceed),
-});
-  });
-};
+      setHover({
+        ...p,
+        xPx: mapX(p.x),
+        yPx: mapY(p.exceed),
+      });
+    });
+  };
 
-const onPointerLeave = () => {
-  if (rafRef.current) cancelAnimationFrame(rafRef.current);
-  rafRef.current = null;
-  setHover(null);
-};
+  const onPointerLeave = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    setHover(null);
+  };
 
   return (
     <Card style={{ padding: 14 }}>
@@ -291,11 +262,11 @@ const onPointerLeave = () => {
 
       <div style={{ marginTop: 12, position: "relative" }}>
         <svg
-           ref={svgRef}
-  viewBox={`0 0 ${W} ${H}`}
-  style={{ width: "100%", height: "auto" }}
-  onPointerMove={onPointerMove}
-  onPointerLeave={onPointerLeave}
+          ref={svgRef}
+          viewBox={`0 0 ${W} ${H}`}
+          style={{ width: "100%", height: "auto" }}
+          onPointerMove={onPointerMove}
+          onPointerLeave={onPointerLeave}
         >
           <path
             d={`M ${padL} ${padT} L ${padL} ${H - padB} L ${W - padR} ${H - padB}`}
@@ -307,9 +278,9 @@ const onPointerLeave = () => {
 
           {hover ? (
             <>
-              <circle cx={mapX(hover.x)} cy={mapY(hover.exceed)} r="4.5" fill="currentColor" />
-              <line x1={mapX(hover.x)} y1={padT} x2={mapX(hover.x)} y2={H - padB} stroke="currentColor" opacity="0.12" />
-              <line x1={padL} y1={mapY(hover.exceed)} x2={W - padR} y2={mapY(hover.exceed)} stroke="currentColor" opacity="0.12" />
+              <circle cx={hover.xPx} cy={hover.yPx} r="4.5" fill="currentColor" />
+              <line x1={hover.xPx} y1={padT} x2={hover.xPx} y2={H - padB} stroke="currentColor" opacity="0.12" />
+              <line x1={padL} y1={hover.yPx} x2={W - padR} y2={hover.yPx} stroke="currentColor" opacity="0.12" />
             </>
           ) : null}
 
@@ -371,14 +342,6 @@ function checkTriad01(label, triad) {
   return out;
 }
 
-function fmtRate(n) {
-  if (!Number.isFinite(n)) return "—";
-  return n.toFixed(2);
-}
-function fmtProb(n) {
-  if (!Number.isFinite(n)) return "—";
-  return n.toFixed(3);
-}
 function lefToHuman(lefPerYear) {
   const lef = Number(lefPerYear);
   if (!Number.isFinite(lef) || lef <= 0) {
@@ -397,7 +360,6 @@ function lefToHuman(lefPerYear) {
   if (intervalYears >= 1) {
     cadenceLabel = `≈ 1 fois tous les ${intervalYears.toFixed(intervalYears < 10 ? 1 : 0)} ans`;
   } else {
-    // < 1 year => show "x times per year"
     cadenceLabel = `≈ ${lef.toFixed(lef < 10 ? 1 : 0)} fois par an`;
   }
 
@@ -405,50 +367,6 @@ function lefToHuman(lefPerYear) {
   const probYear = 1 - Math.exp(-lef);
 
   return { lef, cadenceLabel, intervalYears, probYear };
-}
-
-function calcFrequencySummary(q) {
-  const level = q?.level || "LEF";
-  const lefML = toNum(q?.lef?.ml);
-  const tefML = toNum(q?.tef?.ml);
-  const cfML = toNum(q?.contactFrequency?.ml);
-  const poaML = toNum(q?.probabilityOfAction?.ml);
-
-  const suscMode = q?.susceptibilityMode || "Direct";
-  const suscDirectML = toNum(q?.susceptibility?.ml);
-  const tcML = toNum(q?.threatCapacity?.ml);
-  const rsML = toNum(q?.resistanceStrength?.ml);
-
-  let tefCalcML = null;
-  let suscCalcML = null;
-  let lefCalcML = null;
-
-  if (level === "LEF") {
-    lefCalcML = lefML;
-  } else if (level === "TEF") {
-    tefCalcML = tefML;
-
-    if (suscMode === "Direct") {
-      suscCalcML = suscDirectML;
-    } else if (tcML !== null && rsML !== null) {
-      suscCalcML = clamp01(deriveSusceptibility(tcML, rsML));
-    }
-
-    if (tefCalcML !== null && suscCalcML !== null) lefCalcML = tefCalcML * suscCalcML;
-  } else {
-    // Contact Frequency
-    if (cfML !== null && poaML !== null) tefCalcML = cfML * poaML;
-
-    if (suscMode === "Direct") {
-      suscCalcML = suscDirectML;
-    } else if (tcML !== null && rsML !== null) {
-      suscCalcML = clamp01(deriveSusceptibility(tcML, rsML));
-    }
-
-    if (tefCalcML !== null && suscCalcML !== null) lefCalcML = tefCalcML * suscCalcML;
-  }
-
-  return { level, tefCalcML, suscCalcML, lefCalcML };
 }
 
 export default function ResultsView({ vendor, scenario, updateVendor, setActiveView }) {
@@ -477,18 +395,17 @@ export default function ResultsView({ vendor, scenario, updateVendor, setActiveV
 
   const hasResults = !!q?.stats?.ale && Array.isArray(q?.aleSamples) && q.aleSamples.length > 0;
 
+  // LEF interpretation (ML)
+  const lefML = toNum(q?.lef?.ml);
+  const lefHuman = useMemo(() => {
+    const h = lefToHuman(lefML);
+    return h?.cadenceLabel || "";
+  }, [lefML]);
+
   // --- Input sanity checks (probabilities must be 0..1)
   const inputWarnings = useMemo(() => {
     const warnings = [];
-    const lefML = toNum(q?.lef?.ml);
-const lefHuman = useMemo(() => {
-  const h = lefToHuman(lefML);
-  return h?.cadenceLabel || "";
-}, [lefML]);
 
-    // Only probabilities:
-    // - Contact Frequency: Probability of Action must be 0..1
-    // - Any level != LEF: Susceptibility (if Direct) must be 0..1
     const level = q?.level || "LEF";
 
     if (level === "Contact Frequency") warnings.push(...checkTriad01("Probability of Action", q?.probabilityOfAction));
@@ -497,7 +414,7 @@ const lefHuman = useMemo(() => {
       warnings.push(...checkTriad01("Susceptibility", q?.susceptibility));
     }
 
-    // Also: if user typed 30 (meaning 30%), show a “common mistake” hint
+    // Common mistake hint: user typed 30 (meaning 30%)
     const spotPercentMistake = (label, triad) => {
       const ml = toNum(triad?.ml);
       if (ml !== null && ml > 1 && ml <= 100) {
@@ -510,8 +427,6 @@ const lefHuman = useMemo(() => {
 
     return warnings;
   }, [q]);
-
-  const freqSummary = useMemo(() => calcFrequencySummary(q), [q]);
 
   const runFairOnly = async () => {
     setRunning(true);
@@ -599,28 +514,29 @@ const lefHuman = useMemo(() => {
         ) : null}
       </Card>
 
-<Card>
-  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-    <div style={{ fontSize: 16, fontWeight: 950 }}>Probabilité du scénario (LEF)</div>
-    <Badge tone="neutral">{lefHuman || "LEF —"}</Badge>
-  </div>
+      {/* LEF simple */}
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 16, fontWeight: 950 }}>Probabilité du scénario (LEF)</div>
+          <Badge tone="neutral">{lefHuman || "LEF —"}</Badge>
+        </div>
 
-  <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9, lineHeight: 1.45 }}>
-    {Number.isFinite(lefML) ? (
-      <>
-        <div>
-          Interprétation : <strong>{lefHuman || "—"}</strong>
+        <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9, lineHeight: 1.45 }}>
+          {Number.isFinite(lefML) ? (
+            <>
+              <div>
+                Interprétation : <strong>{lefHuman || "—"}</strong>
+              </div>
+              <div style={{ marginTop: 6, opacity: 0.85 }}>
+                Probabilité qu’il arrive au moins une fois sur 1 an :{" "}
+                <strong>{(100 * (1 - Math.exp(-lefML))).toFixed(1)}%</strong>
+              </div>
+            </>
+          ) : (
+            <div>Renseigne LEF (ML) pour obtenir une interprétation.</div>
+          )}
         </div>
-        <div style={{ marginTop: 6, opacity: 0.85 }}>
-          Probabilité qu’il arrive au moins une fois sur 1 an :{" "}
-          <strong>{(100 * (1 - Math.exp(-lefML))).toFixed(1)}%</strong>
-        </div>
-      </>
-    ) : (
-      <div>Renseigne LEF (ML) pour obtenir une interprétation.</div>
-    )}
-  </div>
-</Card>
+      </Card>
 
       {/* Input checks */}
       {inputWarnings.length ? (
@@ -642,33 +558,6 @@ const lefHuman = useMemo(() => {
           </div>
         </Card>
       ) : null}
-
-      {/* Frequency summary (connect inputs to taxonomy) */}
-      <Card>
-        <div style={{ fontSize: 16, fontWeight: 950 }}>Frequency summary (from your inputs, ML)</div>
-        <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85, lineHeight: 1.55 }}>
-          This is a “quick read” that helps you connect your scenario inputs to the FAIR frequency chain.
-        </div>
-
-        <Divider />
-
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <Badge tone="neutral">Level: {freqSummary.level}</Badge>
-          <Badge tone="neutral">
-            TEF (calc, ML): {freqSummary.tefCalcML === null ? "—" : fmtRate(freqSummary.tefCalcML)}
-          </Badge>
-          <Badge tone="neutral">
-            Susceptibility (calc, ML): {freqSummary.suscCalcML === null ? "—" : fmtProb(freqSummary.suscCalcML)}
-          </Badge>
-          <Badge tone="neutral">
-            LEF (calc, ML): {freqSummary.lefCalcML === null ? "—" : fmtRate(freqSummary.lefCalcML)}
-          </Badge>
-        </div>
-
-        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75, lineHeight: 1.5 }}>
-          Note: this uses the <strong>ML</strong> values only. The simulation uses min/ML/max to generate a distribution.
-        </div>
-      </Card>
 
       {/* No results yet */}
       {!hasResults ? (
@@ -707,26 +596,13 @@ const lefHuman = useMemo(() => {
 
           {/* Charts: ALE histogram + ALE exceedance */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>
-            <Histogram
-              title="Histogram — Annual Loss (ALE)"
-              subtitle="How annual losses cluster across simulation years."
-              values={q.aleSamples}
-            />
-            <ExceedanceCurve
-              title="Exceedance — Annual Loss (ALE)"
-              subtitle="P(Annual Loss > x) across simulation years."
-              curve={q.curve}
-            />
+            <Histogram title="Histogram — Annual Loss (ALE)" subtitle="How annual losses cluster across simulation years." values={q.aleSamples} />
+            <ExceedanceCurve title="Exceedance — Annual Loss (ALE)" subtitle="P(Annual Loss > x) across simulation years." curve={q.curve} />
           </div>
 
           {/* Optional: PEL histogram */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 14, alignItems: "start" }}>
-            <Histogram
-              title="Histogram — Per-Event Loss (PEL)"
-              subtitle="Distribution of loss size per event."
-              values={q.pelSamples}
-              bins={24}
-            />
+            <Histogram title="Histogram — Per-Event Loss (PEL)" subtitle="Distribution of loss size per event." values={q.pelSamples} bins={24} />
           </div>
         </>
       )}
