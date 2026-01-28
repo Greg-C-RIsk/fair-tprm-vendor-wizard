@@ -526,6 +526,19 @@ export default function Page() {
     );
   };
 
+  const updateManyVendors = (vendorIds, patchOrFn) => {
+  setState((p) =>
+    normalizeState({
+      ...p,
+      vendors: (Array.isArray(p.vendors) ? p.vendors : []).map((v) => {
+        if (!vendorIds.includes(v.id)) return v;
+        const patch = typeof patchOrFn === "function" ? patchOrFn(v) : patchOrFn;
+        return { ...v, ...patch };
+      }),
+    })
+  );
+};
+
   const selectVendor = (vendorId) => {
     const v = vendors.find((x) => x.id === vendorId) || vendors[0] || null;
     setState((p) =>
