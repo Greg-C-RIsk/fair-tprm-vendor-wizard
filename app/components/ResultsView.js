@@ -606,14 +606,14 @@ const lefHuman = useMemo(() => {
   </div>
 
   <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9, lineHeight: 1.45 }}>
-    {Number.isFinite(lefHuman?.lef) ? (
+    {Number.isFinite(lefML) ? (
       <>
         <div>
-          Interprétation : <strong>{lefHuman.cadenceLabel}</strong>
+          Interprétation : <strong>{lefHuman || "—"}</strong>
         </div>
         <div style={{ marginTop: 6, opacity: 0.85 }}>
           Probabilité qu’il arrive au moins une fois sur 1 an :{" "}
-          <strong>{(lefHuman.probYear * 100).toFixed(1)}%</strong>
+          <strong>{(100 * (1 - Math.exp(-lefML))).toFixed(1)}%</strong>
         </div>
       </>
     ) : (
