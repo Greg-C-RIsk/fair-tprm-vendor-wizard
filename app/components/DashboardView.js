@@ -894,8 +894,6 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                           {/* ✅ Simple LEF message (no chain) */}
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <Pill>
-                              LEF (ML): <strong>{Number.isFinite(lefML) ? lefML.toFixed(2) :
-                                                        <Pill>
                               LEF (ML): <strong>{Number.isFinite(lefML) ? lefML.toFixed(2) : "—"}</strong> / an
                             </Pill>
                             <Pill>
@@ -903,9 +901,7 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                             </Pill>
                             <Pill>
                               Proba sur 1 an:{" "}
-                              <strong>
-                                {Number.isFinite(lefH.probYear) ? (lefH.probYear * 100).toFixed(1) + "%" : "—"}
-                              </strong>
+                              <strong>{Number.isFinite(lefH.probYear) ? (lefH.probYear * 100).toFixed(1) + "%" : "—"}</strong>
                             </Pill>
                           </div>
 
@@ -967,9 +963,7 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                       );
                     })}
 
-                    {scs.length === 0 ? (
-                      <div style={{ fontSize: 13, opacity: 0.8 }}>No scenarios to show for this filter.</div>
-                    ) : null}
+                    {scs.length === 0 ? <div style={{ fontSize: 13, opacity: 0.8 }}>No scenarios to show for this filter.</div> : null}
                   </div>
                 </details>
               </div>
