@@ -2,17 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { emptyTiering, tierIndex } from "../../lib/model";
-import { deriveSusceptibility as deriveSuscEngine } from "../../lib/fairEngine";
 
+// -----------------------------
+// small utils
+// -----------------------------
 function toNum(x) {
-  if (x === null || x === undefined) return null;
+  if (x === null || x === undefined || x === "") return null;
   const n = Number(String(x).replace(",", "."));
   return Number.isFinite(n) ? n : null;
-}
-
-function clamp01(x) {
-  if (!Number.isFinite(x)) return 0;
-  return Math.max(0, Math.min(1, x));
 }
 
 function moneyEUR(n) {
@@ -39,6 +36,37 @@ function suggestTierFromIndex(idx) {
   return { tier: "Tier 1", label: "High criticality / exposure" };
 }
 
+function isFinitePos(n) {
+  return Number.isFinite(n) && n >= 0;
+}
+
+// -----------------------------
+// LEF => human text (simple)
+// -----------------------------
+function lefToHuman(lefPerYear) {
+  const lef = Number(lefPerYear);
+  if (!Number.isFinite(lef) || lef <= 0) {
+    return { lef, cadenceLabel: "—", probYear: null };
+  }
+
+  const intervalYears = 1 / lef;
+
+  let cadenceLabel = "";
+  if (intervalYears >= 1) {
+    cadenceLabel = `≈ 1 fois tous les ${intervalYears.toFixed(intervalYears < 10 ? 1 : 0)} ans`;
+  } else {
+    cadenceLabel = `≈ ${lef.toFixed(lef < 10 ? 1 : 0)} fois par an`;
+  }
+
+  // Probabilité d'au moins un événement sur 1 an (Poisson)
+  const probYear = 1 - Math.exp(-lef);
+
+  return { lef, cadenceLabel, probYear };
+}
+
+// -----------------------------
+// UI atoms
+// -----------------------------
 function TierBadge({ tier }) {
   const t = String(tier || "").trim();
   const styleByTier =
@@ -61,6 +89,32 @@ function TierBadge({ tier }) {
       }}
     >
       {t || "Tier —"}
+    </span>
+  );
+}
+
+function StatusBadge({ status }) {
+  const s = status || "Unknown";
+  const styleBy =
+    s === "Ready"
+      ? { background: "rgba(34,197,94,0.16)", border: "1px solid rgba(34,197,94,0.35)" }
+      : s === "Missing results"
+      ? { background: "rgba(245,158,11,0.16)", border: "1px solid rgba(245,158,11,0.35)" }
+      : { background: "rgba(239,68,68,0.16)", border: "1px solid rgba(239,68,68,0.35)" };
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "6px 10px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 900,
+        ...styleBy,
+      }}
+    >
+      {s}
     </span>
   );
 }
@@ -103,34 +157,16 @@ function Card({ children, style }) {
   );
 }
 
-function StatusBadge({ status }) {
-  const s = status || "Unknown";
-  const styleBy =
-    s === "Ready"
-      ? { background: "rgba(34,197,94,0.16)", border: "1px solid rgba(34,197,94,0.35)" }
-      : s === "Missing results"
-      ? { background: "rgba(245,158,11,0.16)", border: "1px solid rgba(245,158,11,0.35)" }
-      : { background: "rgba(239,68,68,0.16)", border: "1px solid rgba(239,68,68,0.35)" };
-
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "6px 10px",
-        borderRadius: 999,
-        fontSize: 12,
-        fontWeight: 900,
-        ...styleBy,
-      }}
-    >
-      {s}
-    </span>
-  );
+function Divider() {
+  return <div style={{ height: 1, background: "rgba(255,255,255,0.10)", margin: "12px 0" }} />;
 }
 
+// -----------------------------
+// Scenario parsing
+// -----------------------------
 function scenarioStatus(s) {
   const q = s?.quant || {};
+
   const hasInputs =
     q &&
     q.primaryLoss &&
@@ -151,13 +187,9 @@ function getScenarioAle(q) {
   return { p50: ale.ml, p90: ale.p90, p10: ale.p10, min: ale.min, max: ale.max };
 }
 
-function scenarioToRow(v, s) {
+function scenarioToRow(v, s, effectiveTier, idx) {
   const status = scenarioStatus(s);
   const ale = getScenarioAle(s?.quant);
-  const tieringObj = v?.tiering || emptyTiering();
-  const idx = tierIndex(tieringObj);
-  const suggested = suggestTierFromIndex(idx);
-  const effectiveTier = (v?.tier || "").trim() ? v.tier.trim() : suggested.tier;
 
   return {
     vendorId: v.id,
@@ -172,98 +204,14 @@ function scenarioToRow(v, s) {
     aleP50: ale?.p50 ?? null,
     aleP90: ale?.p90 ?? null,
     lastRunAt: s?.quant?.lastRunAt || "",
+
+    // LEF (simple)
+    lefML: toNum(s?.quant?.lef?.ml),
   };
 }
 
-function isFinitePos(n) {
-  return Number.isFinite(n) && n >= 0;
-}
-
 // -----------------------------
-// FAIR summary (TEF / Susc / LEF)
-// -----------------------------
-function interpretPoa(x) {
-  // In FAIR engine, PoA is treated as % (0..100), but your UI sometimes labels 0..1.
-  // We support both:
-  // - if value <= 1 -> treat as 0..1
-  // - if value > 1 -> treat as percent -> /100
-  if (x === null) return null;
-  if (x <= 1) return clamp01(x);
-  return clamp01(x / 100);
-}
-
-function interpretSusc(x) {
-  // Support both 0..1 and 0..100
-  if (x === null) return null;
-  if (x <= 1) return clamp01(x);
-  return clamp01(x / 100);
-}
-
-function fairSummaryFromQuant(q) {
-  const level = q?.level || "LEF";
-
-  const lefML = toNum(q?.lef?.ml);
-  const tefML_direct = toNum(q?.tef?.ml);
-
-  const cfML = toNum(q?.contactFrequency?.ml);
-  const poaML_raw = toNum(q?.probabilityOfAction?.ml);
-  const poaML = interpretPoa(poaML_raw);
-
-  const tcML = toNum(q?.threatCapacity?.ml);
-  const rsML = toNum(q?.resistanceStrength?.ml);
-
-  const suscMode = q?.susceptibilityMode || "Direct";
-  const suscDirectML = interpretSusc(toNum(q?.susceptibility?.ml));
-
-  let tefML = null;
-  let suscML = null;
-  let lefCalcML = null;
-
-  if (level === "LEF") {
-    tefML = null;
-    suscML = null;
-    lefCalcML = lefML;
-  } else if (level === "TEF") {
-    tefML = tefML_direct;
-
-    if (suscMode === "Direct") {
-      suscML = suscDirectML;
-    } else {
-      if (tcML !== null && rsML !== null) {
-        suscML = clamp01(deriveSuscEngine(tcML, rsML));
-      }
-    }
-
-    if (tefML !== null && suscML !== null) lefCalcML = tefML * suscML;
-  } else if (level === "Contact Frequency") {
-    if (cfML !== null && poaML !== null) tefML = cfML * poaML;
-
-    if (suscMode === "Direct") {
-      suscML = suscDirectML;
-    } else {
-      if (tcML !== null && rsML !== null) {
-        suscML = clamp01(deriveSuscEngine(tcML, rsML));
-      }
-    }
-
-    if (tefML !== null && suscML !== null) lefCalcML = tefML * suscML;
-  }
-
-  return { level, tefML, suscML, lefCalcML };
-}
-
-function fmtRate(n) {
-  if (!Number.isFinite(n)) return "—";
-  return n.toFixed(2);
-}
-
-function fmtProb(n) {
-  if (!Number.isFinite(n)) return "—";
-  return n.toFixed(3);
-}
-
-// -----------------------------
-// Sparkline types
+// Mini charts (sparklines)
 // -----------------------------
 function SparklineExceedance({ values, width = 240, height = 54 }) {
   const [hover, setHover] = useState(null);
@@ -287,7 +235,10 @@ function SparklineExceedance({ values, width = 240, height = 54 }) {
 
   if (!data) return null;
 
-  const padL = 8, padR = 8, padT = 6, padB = 10;
+  const padL = 8,
+    padR = 8,
+    padT = 6,
+    padB = 10;
   const innerW = Math.max(1, width - padL - padR);
   const innerH = Math.max(1, height - padT - padB);
 
@@ -393,7 +344,10 @@ function SparklineHistogram({ values, width = 240, height = 54 }) {
 
   if (!data) return null;
 
-  const padL = 8, padR = 8, padT = 6, padB = 10;
+  const padL = 8,
+    padR = 8,
+    padT = 6,
+    padB = 10;
   const innerW = Math.max(1, width - padL - padR);
   const innerH = Math.max(1, height - padT - padB);
   const barW = innerW / data.bins;
@@ -442,24 +396,11 @@ function SparklineHistogram({ values, width = 240, height = 54 }) {
             const x = padL + i * barW + 1;
             const y = padT + (innerH - h);
             const w = Math.max(1, barW - 2);
-            return (
-              <rect
-                key={i}
-                x={x}
-                y={y}
-                width={w}
-                height={h}
-                fill="currentColor"
-                opacity="0.65"
-                rx="2"
-              />
-            );
+            return <rect key={i} x={x} y={y} width={w} height={h} fill="currentColor" opacity="0.65" rx="2" />;
           })}
 
           {hover ? (
-            <>
-              <line x1={hover.x} y1={padT} x2={hover.x} y2={height - padB} stroke="currentColor" opacity="0.15" />
-            </>
+            <line x1={hover.x} y1={padT} x2={hover.x} y2={height - padB} stroke="currentColor" opacity="0.15" />
           ) : null}
         </svg>
 
@@ -503,72 +444,89 @@ function SparklineHistogram({ values, width = 240, height = 54 }) {
 export default function DashboardView({ vendors, setActiveView, selectVendor, selectScenario }) {
   const [q, setQ] = useState("");
   const [showOnlyCarry, setShowOnlyCarry] = useState(false);
-
   const [onlyTier1, setOnlyTier1] = useState(false);
   const [onlyReadyScenarios, setOnlyReadyScenarios] = useState(false);
-
   const [sortBy, setSortBy] = useState("Worst ALE p90");
-
-  // ✅ NEW: sparkline toggle
   const [sparkType, setSparkType] = useState("Exceedance"); // "Exceedance" | "Histogram"
+  const [topN, setTopN] = useState(10);
 
-  const rows = useMemo(() => {
+  // Precompute “vendor cards” and “scenario rows” once (faster + cleaner)
+  const computed = useMemo(() => {
     const list = Array.isArray(vendors) ? vendors : [];
     const needle = q.trim().toLowerCase();
 
-    const effectiveTierOf = (v) => {
-      const idx = tierIndex(v?.tiering || emptyTiering());
-      const suggested = suggestTierFromIndex(idx);
-      return (v?.tier || "").trim() ? v.tier.trim() : suggested.tier;
-    };
+    const tierRank = (tier) => (tier === "Tier 1" ? 1 : tier === "Tier 2" ? 2 : tier === "Tier 3" ? 3 : 99);
 
-    let out = list.filter((v) => {
-      if (showOnlyCarry && !v?.carryForward) return false;
-      if (onlyTier1 && effectiveTierOf(v) !== "Tier 1") return false;
+    const vendorCards = [];
+    const scenarioRows = [];
+
+    for (const v of list) {
+      // Search + filters (vendor-level)
+      if (showOnlyCarry && !v?.carryForward) continue;
+
+      const tObj = v?.tiering || emptyTiering();
+      const idx = tierIndex(tObj);
+      const suggested = suggestTierFromIndex(idx);
+      const effectiveTier = (v?.tier || "").trim() ? v.tier.trim() : suggested.tier;
+
+      if (onlyTier1 && effectiveTier !== "Tier 1") continue;
 
       if (needle) {
         const ok =
           (v?.name || "").toLowerCase().includes(needle) ||
           (v?.category || "").toLowerCase().includes(needle) ||
           (v?.geography || "").toLowerCase().includes(needle);
-        if (!ok) return false;
+        if (!ok) continue;
       }
 
-      if (onlyReadyScenarios) {
-        const scs = Array.isArray(v?.scenarios) ? v.scenarios : [];
-        return scs.some((s) => scenarioStatus(s) === "Ready");
-      }
+      const allScs = Array.isArray(v?.scenarios) ? v.scenarios : [];
+      const readyCount = allScs.filter((s) => scenarioStatus(s) === "Ready").length;
 
-      return true;
-    });
+      if (onlyReadyScenarios && readyCount === 0) continue;
 
-    const tierRank = (tier) => (tier === "Tier 1" ? 1 : tier === "Tier 2" ? 2 : tier === "Tier 3" ? 3 : 99);
-
-    const worstP90 = (v) => {
-      const scs = Array.isArray(v?.scenarios) ? v.scenarios : [];
-      let best = -Infinity;
-      for (const s of scs) {
+      // vendor “headline”: worst p90
+      let worst = null;
+      for (const s of allScs) {
         const a = getScenarioAle(s?.quant);
-        if (a && Number.isFinite(a.p90)) best = Math.max(best, a.p90);
+        if (a && Number.isFinite(a.p90)) {
+          if (!worst || a.p90 > worst.p90) worst = { ...a, scenario: s };
+        }
       }
-      return best === -Infinity ? -1 : best;
+
+      // scenario rows for portfolio + scenario details
+      for (const s of allScs) {
+        scenarioRows.push(scenarioToRow(v, s, effectiveTier, idx));
+      }
+
+      vendorCards.push({
+        vendor: v,
+        tierIndex: idx,
+        suggested,
+        effectiveTier,
+        allScs,
+        readyCount,
+        worst,
+        tierRank: tierRank(effectiveTier),
+      });
+    }
+
+    // Sorting vendors
+    const worstP90OfVendor = (card) => {
+      const w = card?.worst;
+      return w && Number.isFinite(w.p90) ? w.p90 : -1;
     };
 
-    out = out.sort((a, b) => {
-      if (sortBy === "Name") return String(a?.name || "").localeCompare(String(b?.name || ""));
-      if (sortBy === "Most scenarios") return (b?.scenarios || []).length - (a?.scenarios || []).length;
-      if (sortBy === "Tier") {
-        const ia = tierRank(effectiveTierOf(a));
-        const ib = tierRank(effectiveTierOf(b));
-        return ia - ib;
-      }
-      return worstP90(b) - worstP90(a);
+    vendorCards.sort((a, b) => {
+      if (sortBy === "Name") return String(a?.vendor?.name || "").localeCompare(String(b?.vendor?.name || ""));
+      if (sortBy === "Most scenarios") return (b?.allScs?.length || 0) - (a?.allScs?.length || 0);
+      if (sortBy === "Tier") return (a?.tierRank || 99) - (b?.tierRank || 99);
+      return worstP90OfVendor(b) - worstP90OfVendor(a);
     });
 
-    return out;
+    return { vendorCards, scenarioRows, allVendorsCount: list.length };
   }, [vendors, q, showOnlyCarry, onlyTier1, onlyReadyScenarios, sortBy]);
 
-   const totals = useMemo(() => {
+  const totals = useMemo(() => {
     const list = Array.isArray(vendors) ? vendors : [];
     let scenarios = 0;
     let ready = 0;
@@ -588,39 +546,25 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
     return { vendors: list.length, scenarios, ready, missing };
   }, [vendors]);
 
-  const scenarioRows = useMemo(() => {
-    const list = Array.isArray(vendors) ? vendors : [];
-    const rows = [];
-
-    for (const v of list) {
-      const scs = Array.isArray(v?.scenarios) ? v.scenarios : [];
-      for (const s of scs) rows.push(scenarioToRow(v, s));
-    }
-
-    return rows;
-  }, [vendors]);
-
   const portfolio = useMemo(() => {
-    const readyRows = scenarioRows.filter(
-      (r) => r.status === "Ready" && isFinitePos(r.aleP90)
-    );
-
+    const readyRows = computed.scenarioRows.filter((r) => r.status === "Ready" && isFinitePos(r.aleP90));
     const sorted = [...readyRows].sort((a, b) => (b.aleP90 ?? -1) - (a.aleP90 ?? -1));
 
     const worst = sorted[0] || null;
-    const top10 = sorted.slice(0, 10);
+    const top = sorted.slice(0, Math.max(1, Math.min(50, Number(topN) || 10)));
 
-    return { worst, top10, readyCount: readyRows.length };
-  }, [scenarioRows]);
+    return { worst, top, readyCount: readyRows.length };
+  }, [computed.scenarioRows, topN]);
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
+      {/* Search / filters */}
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
           <div>
             <div style={{ fontSize: 20, fontWeight: 950 }}>Dashboard</div>
             <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>
-              Portfolio overview: tiering + FAIR scenario outputs (training-friendly).
+              Portfolio overview: tiers + worst scenarios + quick drill-down.
             </div>
 
             <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -647,7 +591,7 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
 
               <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, opacity: 0.9 }}>
                 <input type="checkbox" checked={onlyTier1} onChange={(e) => setOnlyTier1(e.target.checked)} />
-                Show only Tier 1 vendors
+                Tier 1 only
               </label>
 
               <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, opacity: 0.9 }}>
@@ -656,7 +600,7 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                   checked={onlyReadyScenarios}
                   onChange={(e) => setOnlyReadyScenarios(e.target.checked)}
                 />
-                Only ready scenarios
+                Only vendors with ready scenarios
               </label>
 
               <select className="input" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
@@ -667,9 +611,9 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
               </select>
             </div>
 
-            {/* ✅ NEW: Sparkline type toggle */}
+            {/* Sparkline selector */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Sparkline type</div>
+              <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Mini chart</div>
               <button
                 className={sparkType === "Exceedance" ? "btn primary" : "btn"}
                 onClick={() => setSparkType("Exceedance")}
@@ -684,15 +628,22 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
               >
                 Histogram
               </button>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>
-                (Shown per scenario)
+
+              <div style={{ marginLeft: 8, display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Portfolio top</div>
+                <select className="input" value={topN} onChange={(e) => setTopN(Number(e.target.value))}>
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
               </div>
             </div>
           </div>
         </div>
       </Card>
 
-      {/* ✅ NEW: Portfolio - Max Scenario */}
+      {/* Portfolio - Max Scenario */}
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -702,8 +653,12 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
             </div>
 
             <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Pill>Ready scenarios: <strong>{portfolio.readyCount}</strong></Pill>
-              <Pill>Top shown: <strong>{Math.min(10, portfolio.top10.length)}</strong></Pill>
+              <Pill>
+                Ready scenarios: <strong>{portfolio.readyCount}</strong>
+              </Pill>
+              <Pill>
+                Showing: <strong>{portfolio.top.length}</strong>
+              </Pill>
             </div>
           </div>
 
@@ -756,9 +711,9 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
           )}
         </div>
 
-        <div style={{ height: 1, background: "rgba(255,255,255,0.10)", margin: "12px 0" }} />
+        <Divider />
 
-        {portfolio.top10.length ? (
+        {portfolio.top.length ? (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead style={{ opacity: 0.8 }}>
@@ -774,18 +729,13 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
               </thead>
 
               <tbody>
-                {portfolio.top10.map((r) => (
-                  <tr
-                    key={r.vendorId + "_" + r.scenarioId}
-                    style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
-                  >
+                {portfolio.top.map((r) => (
+                  <tr key={r.vendorId + "_" + r.scenarioId} style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
                     <td style={{ padding: "8px 6px" }}>{r.vendorName}</td>
                     <td style={{ padding: "8px 6px" }}>{r.tier}</td>
                     <td style={{ padding: "8px 6px" }}>{r.scenarioTitle}</td>
                     <td style={{ padding: "8px 6px", textAlign: "right" }}>{moneyEUR(r.aleP50)}</td>
-                    <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 950 }}>
-                      {moneyEUR(r.aleP90)}
-                    </td>
+                    <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 950 }}>{moneyEUR(r.aleP90)}</td>
                     <td style={{ padding: "8px 6px" }}>{fmtDate(r.lastRunAt)}</td>
                     <td style={{ padding: "8px 6px", textAlign: "right" }}>
                       <button
@@ -829,7 +779,7 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
         )}
       </Card>
 
-      {/* Cards grid */}
+      {/* Vendor cards */}
       <div
         style={{
           display: "grid",
@@ -838,24 +788,11 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
           alignItems: "start",
         }}
       >
-        {rows.map((v) => {
-          const tObj = v?.tiering || emptyTiering();
-          const idx = tierIndex(tObj);
-          const suggested = suggestTierFromIndex(idx);
-          const effectiveTier = (v?.tier || "").trim() ? v.tier.trim() : suggested.tier;
+        {computed.vendorCards.map((card) => {
+          const v = card.vendor;
+          const allScs = card.allScs;
 
-          const allScs = Array.isArray(v?.scenarios) ? v.scenarios : [];
           const scs = onlyReadyScenarios ? allScs.filter((s) => scenarioStatus(s) === "Ready") : allScs;
-          const readyCount = allScs.filter((s) => scenarioStatus(s) === "Ready").length;
-
-          // Vendor “headline”: worst p90
-          let worst = null;
-          for (const s of allScs) {
-            const a = getScenarioAle(s?.quant);
-            if (a && Number.isFinite(a.p90)) {
-              if (!worst || a.p90 > worst.p90) worst = { ...a, scenario: s };
-            }
-          }
 
           return (
             <Card key={v.id}>
@@ -873,35 +810,41 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                 </div>
 
                 <div style={{ display: "grid", gap: 8, justifyItems: "end" }}>
-                  <TierBadge tier={effectiveTier} />
+                  <TierBadge tier={card.effectiveTier} />
                   <div style={{ fontSize: 12, opacity: 0.8 }}>
-                    Index: <strong>{idx.toLocaleString()}</strong>
+                    Index: <strong>{card.tierIndex.toLocaleString()}</strong>
                   </div>
                 </div>
               </div>
 
-              <div style={{ height: 1, background: "rgba(255,255,255,0.10)", margin: "12px 0" }} />
+              <Divider />
 
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <Pill>Scenarios: <strong>{allScs.length}</strong></Pill>
-                <Pill>Ready: <strong>{readyCount}</strong></Pill>
-                <Pill>Suggested: <strong>{suggested.tier}</strong></Pill>
+                <Pill>
+                  Scenarios: <strong>{allScs.length}</strong>
+                </Pill>
+                <Pill>
+                  Ready: <strong>{card.readyCount}</strong>
+                </Pill>
+                <Pill>
+                  Suggested: <strong>{card.suggested.tier}</strong>
+                </Pill>
               </div>
 
               <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Risk spotlight (training)</div>
-                {worst ? (
+                <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Risk spotlight</div>
+                {card.worst ? (
                   <div style={{ marginTop: 8, display: "grid", gap: 6, fontSize: 13, opacity: 0.92 }}>
                     <div>
                       Worst scenario (by <strong>ALE p90</strong>):{" "}
-                      <strong>{worst.scenario?.title?.trim() ? worst.scenario.title : "(Untitled scenario)"}</strong>
+                      <strong>{card.worst.scenario?.title?.trim() ? card.worst.scenario.title : "(Untitled scenario)"}</strong>
                     </div>
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                      <Pill>ALE p50: {moneyEUR(worst.p50)}</Pill>
-                      <Pill>ALE p90: {moneyEUR(worst.p90)}</Pill>
+                      <Pill>ALE p50: {moneyEUR(card.worst.p50)}</Pill>
+                      <Pill>ALE p90: {moneyEUR(card.worst.p90)}</Pill>
                     </div>
                     <div style={{ fontSize: 12, opacity: 0.75 }}>
-                      p50 = “typical” annual loss; p90 = “high-end” annual loss (90% of years are below this).
+                      p50 = “typical” annual loss; p90 = “high-end” annual loss.
                     </div>
                   </div>
                 ) : (
@@ -915,14 +858,17 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
               <div style={{ marginTop: 12 }}>
                 <details>
                   <summary style={{ cursor: "pointer", fontWeight: 900, fontSize: 13, opacity: 0.9 }}>
-                    Show scenario details ({scs.length}{onlyReadyScenarios ? " shown" : ""})
+                    Show scenario details ({scs.length}
+                    {onlyReadyScenarios ? " shown" : ""})
                   </summary>
 
                   <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
                     {scs.map((s) => {
                       const st = scenarioStatus(s);
                       const ale = getScenarioAle(s?.quant);
-                      const fair = fairSummaryFromQuant(s?.quant || {});
+
+                      const lefML = toNum(s?.quant?.lef?.ml);
+                      const lefH = lefToHuman(lefML);
 
                       return (
                         <div
@@ -936,9 +882,7 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                           }}
                         >
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                            <div style={{ fontWeight: 950 }}>
-                              {s?.title?.trim() ? s.title : "(Untitled scenario)"}
-                            </div>
+                            <div style={{ fontWeight: 950 }}>{s?.title?.trim() ? s.title : "(Untitled scenario)"}</div>
                             <StatusBadge status={st} />
                           </div>
 
@@ -947,11 +891,22 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                             <Pill>Last run: {fmtDate(s?.quant?.lastRunAt)}</Pill>
                           </div>
 
-                          {/* ✅ NEW: FAIR calculated summary */}
+                          {/* ✅ Simple LEF message (no chain) */}
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <Pill>TEF (calc, ML): <strong>{fair.tefML === null ? "—" : fmtRate(fair.tefML)}</strong></Pill>
-                            <Pill>Susceptibility (calc, ML): <strong>{fair.suscML === null ? "—" : fmtProb(fair.suscML)}</strong></Pill>
-                            <Pill>LEF (calc, ML): <strong>{fair.lefCalcML === null ? "—" : fmtRate(fair.lefCalcML)}</strong></Pill>
+                            <Pill>
+                              LEF (ML): <strong>{Number.isFinite(lefML) ? lefML.toFixed(2) :
+                                                        <Pill>
+                              LEF (ML): <strong>{Number.isFinite(lefML) ? lefML.toFixed(2) : "—"}</strong> / an
+                            </Pill>
+                            <Pill>
+                              Interprétation: <strong>{lefH.cadenceLabel || "—"}</strong>
+                            </Pill>
+                            <Pill>
+                              Proba sur 1 an:{" "}
+                              <strong>
+                                {Number.isFinite(lefH.probYear) ? (lefH.probYear * 100).toFixed(1) + "%" : "—"}
+                              </strong>
+                            </Pill>
                           </div>
 
                           {ale ? (
@@ -961,12 +916,10 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                               <Pill>ALE p90: {moneyEUR(ale.p90)}</Pill>
                             </div>
                           ) : (
-                            <div style={{ fontSize: 12, opacity: 0.75 }}>
-                              No ALE stats yet (run simulation first).
-                            </div>
+                            <div style={{ fontSize: 12, opacity: 0.75 }}>No ALE stats yet (run simulation first).</div>
                           )}
 
-                          {/* ✅ NEW: Sparkline type switch */}
+                          {/* Mini chart */}
                           {Array.isArray(s?.quant?.aleSamples) && s.quant.aleSamples.length ? (
                             sparkType === "Histogram" ? (
                               <SparklineHistogram values={s.quant.aleSamples} />
@@ -976,42 +929,40 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
                           ) : null}
 
                           {/* Navigation buttons */}
-                          {(setActiveView || selectVendor || selectScenario) ? (
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
-                              <button
-                                className="btn"
-                                onClick={() => {
-                                  if (selectVendor) selectVendor(v.id);
-                                  if (selectScenario) selectScenario(s.id);
-                                  if (setActiveView) setActiveView("Scenarios");
-                                }}
-                              >
-                                Open scenario →
-                              </button>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+                            <button
+                              className="btn"
+                              onClick={() => {
+                                selectVendor?.(v.id);
+                                selectScenario?.(s.id);
+                                setActiveView?.("Scenarios");
+                              }}
+                            >
+                              Open scenario →
+                            </button>
 
-                              <button
-                                className="btn"
-                                onClick={() => {
-                                  if (selectVendor) selectVendor(v.id);
-                                  if (selectScenario) selectScenario(s.id);
-                                  if (setActiveView) setActiveView("Quantify");
-                                }}
-                              >
-                                Go to Quantify →
-                              </button>
+                            <button
+                              className="btn"
+                              onClick={() => {
+                                selectVendor?.(v.id);
+                                selectScenario?.(s.id);
+                                setActiveView?.("Quantify");
+                              }}
+                            >
+                              Go to Quantify →
+                            </button>
 
-                              <button
-                                className="btn primary"
-                                onClick={() => {
-                                  if (selectVendor) selectVendor(v.id);
-                                  if (selectScenario) selectScenario(s.id);
-                                  if (setActiveView) setActiveView("Results");
-                                }}
-                              >
-                                Go to Results →
-                              </button>
-                            </div>
-                          ) : null}
+                            <button
+                              className="btn primary"
+                              onClick={() => {
+                                selectVendor?.(v.id);
+                                selectScenario?.(s.id);
+                                setActiveView?.("Results");
+                              }}
+                            >
+                              Go to Results →
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
@@ -1030,9 +981,9 @@ export default function DashboardView({ vendors, setActiveView, selectVendor, se
       <Card>
         <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Teaching note</div>
         <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85, lineHeight: 1.5 }}>
-          The sparklines visualize the annual loss distribution (ALE) per scenario. Use <strong>Exceedance</strong> to see
-          “P(Loss &gt; x)” or <strong>Histogram</strong> to see how simulations cluster into ranges. The FAIR summary shows the
-          calculated TEF / Susceptibility / LEF (ML) so learners can connect results back to the FAIR frequency taxonomy.
+          The mini charts visualize the annual loss distribution (ALE) per scenario. Use <strong>Exceedance</strong> to see
+          “P(Loss &gt; x)” or <strong>Histogram</strong> to see how simulations cluster into ranges. The LEF block gives a simple
+          interpretation (cadence + probability over 1 year).
         </div>
       </Card>
     </div>
