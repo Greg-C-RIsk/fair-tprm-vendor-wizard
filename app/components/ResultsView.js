@@ -481,7 +481,10 @@ export default function ResultsView({ vendor, scenario, updateVendor, setActiveV
   const inputWarnings = useMemo(() => {
     const warnings = [];
     const lefML = toNum(q?.lef?.ml);
-const lefHuman = useMemo(() => lefToHuman(lefML), [lefML]);
+const lefHuman = useMemo(() => {
+  const h = lefToHuman(lefML);
+  return h?.cadenceLabel || "";
+}, [lefML]);
 
     // Only probabilities:
     // - Contact Frequency: Probability of Action must be 0..1
