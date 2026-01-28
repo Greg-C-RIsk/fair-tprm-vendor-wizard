@@ -599,7 +599,7 @@ const lefHuman = useMemo(() => lefToHuman(lefML), [lefML]);
 <Card>
   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
     <div style={{ fontSize: 16, fontWeight: 950 }}>Probabilité du scénario (LEF)</div>
-    <Badge tone="neutral">LEF (ML): {lefHuman?.lef ? lefHuman.lef.toFixed(2) : "—"} / an</Badge>
+    <Badge tone="neutral">{lefHuman || "LEF —"}</Badge>
   </div>
 
   <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9, lineHeight: 1.45 }}>
