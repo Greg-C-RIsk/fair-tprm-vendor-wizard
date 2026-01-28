@@ -526,7 +526,7 @@ export default function Page() {
     );
   };
 
-  const updateManyVendors = (vendorIds, patchOrFn) => {
+const updateManyVendors = (vendorIds, patchOrFn) => {
   setState((p) =>
     normalizeState({
       ...p,
