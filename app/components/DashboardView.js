@@ -860,8 +860,6 @@ export default function DashboardView({
               </label>
 
               <select className="input" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-                
-              <select className="input" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
                 <option>Worst ALE p90</option>
                 <option>Name</option>
                 <option>Tier</option>
