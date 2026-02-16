@@ -595,14 +595,32 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
       scenarios: Array.isArray(d.scenarios) && d.scenarios.length ? d.scenarios : [emptyScenario()],
     };
 
-    setState((p) =>
-      normalizeState({
+    const isPlaceholderVendor = (x) => {
+      if (!x || typeof x !== "object") return false;
+      const hasIdentity = !!(x.name?.trim() || x.businessOwner?.trim() || x.criticalFunction?.trim() || x.dataTypes?.trim());
+      const sc = Array.isArray(x.scenarios) ? x.scenarios : [];
+      const onlyEmptyScenario =
+        sc.length === 1 &&
+        !sc[0]?.title?.trim() &&
+        !sc[0]?.assetAtRisk?.trim() &&
+        !sc[0]?.attackVector?.trim() &&
+        !sc[0]?.lossEvent?.trim() &&
+        !(Array.isArray(sc[0]?.quant?.aleSamples) && sc[0].quant.aleSamples.length > 0) &&
+        !Number.isFinite(sc[0]?.quant?.stats?.ale?.p90);
+      return !hasIdentity && onlyEmptyScenario;
+    };
+
+    setState((p) => {
+      const current = Array.isArray(p.vendors) ? p.vendors : [];
+      const vendors = current.length === 1 && isPlaceholderVendor(current[0]) ? [v] : [...current, v];
+
+      return normalizeState({
         ...p,
-        vendors: [...(Array.isArray(p.vendors) ? p.vendors : []), v],
+        vendors,
         selectedVendorId: v.id,
         selectedScenarioId: v.scenarios?.[0]?.id || "",
-      })
-    );
+      });
+    });
 
     closeVendorForm();
   };

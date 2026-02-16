@@ -95,17 +95,27 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView, sel
   };
 
   const addScenario = () => {
-    const s = emptyScenario();
-    const next = [
-      ...(Array.isArray(localScenarios) ? localScenarios : []),
-      {
-        ...s,
-        id: uid(),
-        title: `Scenario ${localScenarios.length + 1}`,
-      },
-    ];
+    const isPlaceholderScenario = (sc) => {
+      if (!sc || typeof sc !== "object") return false;
+      return (
+        !sc.title?.trim() &&
+        !sc.assetAtRisk?.trim() &&
+        !sc.attackVector?.trim() &&
+        !sc.lossEvent?.trim() &&
+        !sc.narrative?.trim() &&
+        !sc.assumptions?.trim() &&
+        !(Array.isArray(sc?.quant?.aleSamples) && sc.quant.aleSamples.length > 0) &&
+        !Number.isFinite(sc?.quant?.stats?.ale?.p90)
+      );
+    };
+
+    const s = { ...emptyScenario(), id: uid(), title: "Scenario " + (localScenarios.length + 1) };
+
+    const base = Array.isArray(localScenarios) ? localScenarios : [];
+    const next = base.length === 1 && isPlaceholderScenario(base[0]) ? [s] : [...base, s];
+
     setLocalScenarios(next);
-    setActiveScenarioId(next[next.length - 1].id);
+    setActiveScenarioId(s.id);
     markDirty();
   };
 
