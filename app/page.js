@@ -845,7 +845,7 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     updateVendor={updateVendor}
   />
 ) : activeView === "Decisions" ? (
-            <DecisionsView vendor={selectedVendor} scenario={selectedScenario} />
+            <DecisionsView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} />
           ) : activeView === "Dashboard" ? (
   <DashboardView
     vendors={vendors}
