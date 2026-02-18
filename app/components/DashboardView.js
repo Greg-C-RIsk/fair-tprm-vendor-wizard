@@ -191,15 +191,32 @@ function extractScenarioRows(vendors) {
     for (const s of Array.isArray(v?.scenarios) ? v.scenarios : []) {
       const q = s?.quant || {};
       const freq = deriveFrequency(q);
-      const magnitudeValue = deriveMagnitude(q);
       const aleP50 = toNum(q?.stats?.ale?.ml);
       const aleP90 = toNum(q?.stats?.ale?.p90);
       const samples = Array.isArray(q?.aleSamples) ? q.aleSamples.filter((x) => Number.isFinite(x)) : [];
 
+      let freqValue = Number.isFinite(freq.value) ? freq.value : null;
+      let freqLabel = freq.label;
+      let magnitudeValue = deriveMagnitude(q);
+
+      // Fallback consistency:
+      // if ALE exists but frequency or magnitude is missing/zero, infer from ALE p50.
+      if ((!Number.isFinite(freqValue) || freqValue <= 0) && Number.isFinite(aleP50) && Number.isFinite(magnitudeValue) && magnitudeValue > 0) {
+        freqValue = aleP50 / magnitudeValue;
+      }
+
+      if ((!Number.isFinite(magnitudeValue) || magnitudeValue <= 0) && Number.isFinite(aleP50) && Number.isFinite(freqValue) && freqValue > 0) {
+        magnitudeValue = aleP50 / freqValue;
+      }
+
+      if (Number.isFinite(freqValue) && (!Number.isFinite(freq.value) || freq.value <= 0)) {
+        freqLabel = `Derived LEF ${freqValue.toFixed(2)} /yr`;
+      }
+
       let criticality = null;
       if (Number.isFinite(aleP90)) criticality = aleP90;
       else if (Number.isFinite(aleP50)) criticality = aleP50;
-      else if (Number.isFinite(freq.value) && Number.isFinite(magnitudeValue)) criticality = freq.value * magnitudeValue;
+      else if (Number.isFinite(freqValue) && Number.isFinite(magnitudeValue)) criticality = freqValue * magnitudeValue;
 
       rows.push({
         vendorId: v?.id,
@@ -208,8 +225,8 @@ function extractScenarioRows(vendors) {
         scenarioTitle: s?.title?.trim() ? s.title : "(Untitled scenario)",
         status: scenarioStatus(q),
         level: q?.level || "LEF",
-        freqValue: Number.isFinite(freq.value) ? freq.value : null,
-        freqLabel: freq.label,
+        freqValue: Number.isFinite(freqValue) ? freqValue : null,
+        freqLabel,
         magnitudeValue: Number.isFinite(magnitudeValue) ? magnitudeValue : null,
         aleP50: Number.isFinite(aleP50) ? aleP50 : null,
         aleP90: Number.isFinite(aleP90) ? aleP90 : null,
@@ -247,10 +264,10 @@ function Tooltip({ hover }) {
   return (
     <div
       style={{
-        position: "absolute",
+        position: "fixed",
         left: x + 12,
         top: y + 12,
-        zIndex: 10,
+        zIndex: 60,
         pointerEvents: "none",
         border: "1px solid rgba(255,255,255,0.16)",
         background: "rgba(0,0,0,0.72)",
@@ -531,6 +548,8 @@ export default function DashboardView({
   updateVendor,
 }) {
   const [query, setQuery] = useState("");
+  const [vendorFilter, setVendorFilter] = useState("all");
+  const [levelFilter, setLevelFilter] = useState("all");
   const [hideMissing, setHideMissing] = useState(false);
   const [hover, setHover] = useState(null);
   const [selectedKey, setSelectedKey] = useState("");
@@ -550,11 +569,20 @@ export default function DashboardView({
   }, []);
 
   const rows = useMemo(() => extractScenarioRows(vendors), [vendors]);
+  const vendorOptions = useMemo(() => {
+    const m = new Map();
+    for (const r of rows) {
+      if (!m.has(r.vendorId)) m.set(r.vendorId, r.vendorName);
+    }
+    return Array.from(m.entries()).map(([id, name]) => ({ id, name }));
+  }, [rows]);
 
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows.filter((r) => {
       if (hideMissing && r.status !== "Ready") return false;
+      if (vendorFilter !== "all" && r.vendorId !== vendorFilter) return false;
+      if (levelFilter !== "all" && r.level !== levelFilter) return false;
       if (!q) return true;
       return (
         r.vendorName.toLowerCase().includes(q) ||
@@ -562,7 +590,7 @@ export default function DashboardView({
         String(r.level || "").toLowerCase().includes(q)
       );
     });
-  }, [rows, query, hideMissing]);
+  }, [rows, query, hideMissing, vendorFilter, levelFilter]);
 
   const sortedByCriticality = useMemo(() => {
     return [...filteredRows].sort((a, b) => {
@@ -783,12 +811,26 @@ export default function DashboardView({
         </div>
 
         <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <select className="input" style={{ width: 220 }} value={vendorFilter} onChange={(e) => setVendorFilter(e.target.value)}>
+            <option value="all">All vendors</option>
+            {vendorOptions.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+              </option>
+            ))}
+          </select>
+          <select className="input" style={{ width: 170 }} value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)}>
+            <option value="all">All levels</option>
+            <option value="LEF">LEF</option>
+            <option value="TEF">TEF</option>
+            <option value="Contact Frequency">Contact Frequency</option>
+          </select>
           <input
             className="input"
-            style={{ maxWidth: 340 }}
+            style={{ maxWidth: 280 }}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter vendor/scenario/level"
+            placeholder="Search vendor or scenario"
           />
           <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, opacity: 0.9 }}>
             <input type="checkbox" checked={hideMissing} onChange={(e) => setHideMissing(e.target.checked)} />
