@@ -24,6 +24,158 @@ import {
 
 const LS_KEY = "fair_tprm_training_v6";
 
+function makeSamples(mid, count = 240, spread = 0.28, phase = 0) {
+  const base = Math.max(1, Number(mid) || 1);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const wave = Math.sin((i + phase) / 7) * spread + Math.cos((i + phase) / 13) * (spread / 2);
+    const noise = ((i * 17 + phase * 11) % 19) / 100 - 0.09;
+    const v = Math.max(0, base * (1 + wave + noise));
+    out.push(v);
+  }
+  return out;
+}
+
+function makeTestDataset() {
+  const vendorSeeds = [
+    {
+      name: "Northbridge CRM Cloud",
+      category: "SaaS",
+      businessOwner: "Head of Sales Ops",
+      geography: "EU",
+      criticalFunction: "CRM operations and lead lifecycle",
+      dataTypes: "Customer PII, contract metadata, sales pipeline",
+      dependencyLevel: "High",
+      carryForward: true,
+      tiering: { dataSensitivity: 4, integrationDepth: 4, accessPrivileges: 4, historicalIncidents: 2, businessCriticality: 5 },
+      tier: "Tier 1",
+    },
+    {
+      name: "Orion Pay Gateway",
+      category: "Payment",
+      businessOwner: "Finance Director",
+      geography: "Global",
+      criticalFunction: "Payment processing and settlement",
+      dataTypes: "Payment tokens, transaction logs, merchant references",
+      dependencyLevel: "High",
+      carryForward: true,
+      tiering: { dataSensitivity: 5, integrationDepth: 5, accessPrivileges: 4, historicalIncidents: 3, businessCriticality: 5 },
+      tier: "Tier 1",
+    },
+    {
+      name: "Helios Managed IT Services",
+      category: "MSP",
+      businessOwner: "IT Director",
+      geography: "US",
+      criticalFunction: "Endpoint administration and infrastructure support",
+      dataTypes: "Admin credentials, endpoint telemetry, incident tickets",
+      dependencyLevel: "Medium",
+      carryForward: false,
+      tiering: { dataSensitivity: 3, integrationDepth: 3, accessPrivileges: 4, historicalIncidents: 2, businessCriticality: 4 },
+      tier: "Tier 2",
+    },
+  ];
+
+  const levelCycle = ["LEF", "TEF", "Contact Frequency"];
+  const scenarioTitles = [
+    "Credential takeover of vendor admin console",
+    "Ransomware propagation through integration channel",
+    "Sensitive data exfiltration via API misuse",
+  ];
+
+  const vendors = vendorSeeds.map((seed, vIdx) => {
+    const v = { ...emptyVendor(), id: uid(), ...seed };
+
+    v.scenarios = Array.from({ length: 3 }).map((_, sIdx) => {
+      const level = levelCycle[sIdx % levelCycle.length];
+      const aleP50 = 90000 + vIdx * 60000 + sIdx * 45000;
+      const aleP90 = aleP50 * (1.55 + sIdx * 0.1);
+      const pelP50 = 25000 + vIdx * 14000 + sIdx * 9000;
+      const pelP90 = pelP50 * 1.7;
+
+      const aleSamples = makeSamples(aleP50, 260, 0.38, vIdx * 29 + sIdx * 11);
+      const pelSamples = makeSamples(pelP50, 420, 0.27, vIdx * 17 + sIdx * 7);
+
+      const s = { ...emptyScenario(), id: uid() };
+      s.title = `${scenarioTitles[sIdx]} (${seed.name.split(" ")[0]})`;
+      s.assetAtRisk = sIdx === 0 ? "Admin accounts and privileged workflows" : sIdx === 1 ? "Business continuity and platform availability" : "Customer and transaction data";
+      s.threatActor = sIdx === 2 ? "Malicious insider / data broker" : "External cybercriminal";
+      s.attackVector = sIdx === 0 ? "Credential stuffing and MFA fatigue" : sIdx === 1 ? "Remote tooling abuse + lateral movement" : "Token abuse and excessive API permissions";
+      s.lossEvent = sIdx === 1 ? "Operational outage and delayed recovery" : "Unauthorized access and data compromise";
+      s.narrative = "Test dataset scenario for training walkthrough.";
+      s.assumptions = "Generated synthetic values for demo only.";
+      s.quant = {
+        ...s.quant,
+        level,
+        lef: { min: "0.2", ml: String(0.8 + vIdx * 0.4 + sIdx * 0.2), max: String(2.2 + vIdx * 0.6 + sIdx * 0.4) },
+        tef: { min: "1.2", ml: String(4 + vIdx + sIdx), max: String(9 + vIdx * 1.2 + sIdx * 1.2) },
+        contactFrequency: { min: "20", ml: String(45 + vIdx * 12 + sIdx * 8), max: String(100 + vIdx * 18 + sIdx * 14) },
+        probabilityOfAction: { min: "0.05", ml: String(0.18 + 0.04 * sIdx), max: String(0.42 + 0.06 * sIdx) },
+        susceptibility: { min: "0.08", ml: String(0.24 + 0.05 * sIdx), max: String(0.52 + 0.06 * sIdx) },
+        threatCapacity: { min: "2", ml: String(4 + sIdx), max: "8" },
+        resistanceStrength: { min: "2", ml: String(3 + vIdx), max: "7" },
+        primaryLoss: { min: String(Math.round(pelP50 * 0.45)), ml: String(Math.round(pelP50 * 0.8)), max: String(Math.round(pelP90 * 0.85)) },
+        secondaryLossEventFrequency: { min: "0.2", ml: String(0.7 + sIdx * 0.2), max: String(1.8 + sIdx * 0.35) },
+        secondaryLossMagnitude: { min: String(Math.round(pelP50 * 0.1)), ml: String(Math.round(pelP50 * 0.35)), max: String(Math.round(pelP50 * 0.8)) },
+        sims: 10000,
+        lastRunAt: new Date().toISOString(),
+        aleSamples,
+        pelSamples,
+        stats: {
+          ale: { min: Math.min(...aleSamples), ml: aleP50, max: Math.max(...aleSamples), p10: aleP50 * 0.58, p90: aleP90 },
+          pel: { min: Math.min(...pelSamples), ml: pelP50, max: Math.max(...pelSamples), p10: pelP50 * 0.65, p90: pelP90 },
+        },
+      };
+
+      s.controls = [
+        {
+          id: uid(),
+          name: "Enforce phishing-resistant MFA",
+          function: "LEC",
+          type: "Resistance",
+          status: "Implemented",
+          includeInWhatIf: true,
+          intended: "High",
+          coverage: "Moderate",
+          reliability: "High",
+        },
+        {
+          id: uid(),
+          name: "24/7 detection and response playbook",
+          function: "LEC",
+          type: "Detection",
+          status: "Planned",
+          includeInWhatIf: true,
+          intended: "Moderate",
+          coverage: "High",
+          reliability: "Moderate",
+        },
+        {
+          id: uid(),
+          name: "Segmentation + recovery drill",
+          function: "LEC",
+          type: "Resilience",
+          status: "Proposed",
+          includeInWhatIf: true,
+          intended: "Moderate",
+          coverage: "Moderate",
+          reliability: "Moderate",
+        },
+      ];
+
+      return s;
+    });
+
+    return v;
+  });
+
+  return {
+    vendors,
+    selectedVendorId: vendors[0]?.id || "",
+    selectedScenarioId: vendors[0]?.scenarios?.[0]?.id || "",
+  };
+}
+
 // ---------------------------
 // Minimal ErrorBoundary (évite la “page blanche”)
 // ---------------------------
@@ -662,6 +814,18 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     closeVendorForm();
   };
 
+  const loadTestData = () => {
+    if (typeof window !== "undefined") {
+      const ok = window.confirm("Load synthetic test dataset (3 vendors x 3 scenarios) and replace current local data?");
+      if (!ok) return;
+    }
+
+    const ds = makeTestDataset();
+    setState(normalizeState(ds));
+    setActiveView("Dashboard");
+    closeVendorForm();
+  };
+
   const tabs = [
     { k: "Vendors", label: "Vendors" },
     { k: "Tiering", label: "Tiering" },
@@ -701,6 +865,9 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button className="btn primary" onClick={loadTestData}>
+              Load test data
+            </Button>
             <Button className="btn" onClick={resetAll}>
               Reset
             </Button>
