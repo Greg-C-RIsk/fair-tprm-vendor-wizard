@@ -240,12 +240,13 @@ function typeHint(fn, type) {
 
 // -------------------- Component --------------------
 
-export default function TreatmentsView({ vendor, scenario, updateVendor }) {
+export default function TreatmentsView({ vendor, scenario, updateVendor, appMode = "tprm" }) {
+  const entityLabel = appMode === "enterprise" ? "asset" : "vendor";
   if (!vendor) {
     return (
       <Card>
         <div style={{ fontSize: 18, fontWeight: 950 }}>Treatments</div>
-        <div style={{ marginTop: 8, opacity: 0.8 }}>Select a vendor first.</div>
+        <div style={{ marginTop: 8, opacity: 0.8 }}>Select a {entityLabel} first.</div>
       </Card>
     );
   }
@@ -362,7 +363,8 @@ export default function TreatmentsView({ vendor, scenario, updateVendor }) {
               impacts risk drivers and estimate <strong>operational effectiveness</strong> (intended efficacy × coverage × reliability).
             </div>
             <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
-              Vendor: <strong>{vendor.name?.trim() ? vendor.name : "(Unnamed vendor)"}</strong> — Scenario:{" "}
+              {appMode === "enterprise" ? "Asset" : "Vendor"}:{" "}
+              <strong>{vendor.name?.trim() ? vendor.name : appMode === "enterprise" ? "(Unnamed asset)" : "(Unnamed vendor)"}</strong> — Scenario:{" "}
               <strong>{scenario.title?.trim() ? scenario.title : "(Untitled scenario)"}</strong>
             </div>
           </div>

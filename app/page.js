@@ -317,7 +317,7 @@ function makePrimaryTestDataset() {
 }
 
 function makeTestDataset(mode = "tprm") {
-  return mode === "primary" ? makePrimaryTestDataset() : makeTPRMTestDataset();
+  return mode === "enterprise" ? makePrimaryTestDataset() : makeTPRMTestDataset();
 }
 
 // ---------------------------
@@ -748,7 +748,7 @@ function VendorsView({
 // Page
 // ---------------------------
 export default function Page() {
-  const [appMode, setAppMode] = useState("tprm"); // "primary" | "tprm"
+  const [appMode, setAppMode] = useState("tprm"); // "enterprise" | "tprm"
   const [activeView, setActiveView] = useState("Vendors");
 
   // IMPORTANT: on attend l’hydratation avant de persister / utiliser certains onglets
@@ -955,13 +955,13 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
         selectedScenarioId: v.scenarios?.[0]?.id || "",
       })
     );
-    setActiveView(appMode === "primary" ? "Scenarios" : "Vendors");
+    setActiveView(appMode === "enterprise" ? "Scenarios" : "Vendors");
     closeVendorForm();
   };
 
   const loadTestData = () => {
     if (typeof window !== "undefined") {
-      const label = appMode === "primary" ? "Primary Risk" : "TPRM";
+      const label = appMode === "enterprise" ? "Enterprise" : "TPRM";
       const ok = window.confirm(`Load synthetic ${label} test dataset (3 contexts x 3 scenarios) and replace current local data?`);
       if (!ok) return;
     }
@@ -973,7 +973,7 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
   };
 
   const tabs = useMemo(() => {
-    if (appMode === "primary") {
+    if (appMode === "enterprise") {
       return [
         { k: "Scenarios", label: "Scenarios" },
         { k: "Quantify", label: "Quantify" },
@@ -1020,7 +1020,7 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
             <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.02em" }}>FAIR Risk Studio</div>
             <div style={{ marginTop: 6, opacity: 0.8 }}>Training only — data stays in your browser.</div>
             <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Pill>Mode: {appMode === "primary" ? "Primary Risk" : "TPRM"}</Pill>
+              <Pill>Mode: {appMode === "enterprise" ? "Enterprise" : "TPRM"}</Pill>
               <Pill>{vendors.length} vendor(s)</Pill>
               <Pill>{totalScenarios} scenario(s)</Pill>
               <Pill>Carry-forward: {carried}</Pill>
@@ -1042,10 +1042,10 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
           <Card style={{ padding: 10 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
               <button
-                onClick={() => setAppMode("primary")}
+                onClick={() => setAppMode("enterprise")}
                 style={{
                   border: "1px solid rgba(255,255,255,0.14)",
-                  background: appMode === "primary" ? "rgba(16,185,129,0.24)" : "rgba(255,255,255,0.06)",
+                  background: appMode === "enterprise" ? "rgba(16,185,129,0.24)" : "rgba(255,255,255,0.06)",
                   color: "inherit",
                   borderRadius: 999,
                   padding: "8px 12px",
@@ -1054,7 +1054,7 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
                   fontSize: 13,
                 }}
               >
-                Primary Risk Mode
+                Enterprise
               </button>
               <button
                 onClick={() => setAppMode("tprm")}
@@ -1069,7 +1069,7 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
                   fontSize: 13,
                 }}
               >
-                TPRM Mode
+                TPRM
               </button>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1105,7 +1105,9 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
                   <div style={{ fontSize: 13, opacity: 0.85, fontWeight: 800 }}>Context</div>
 
                   <div style={{ minWidth: 260 }}>
-                    <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Vendor</div>
+                    <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>
+                      {appMode === "enterprise" ? "Asset" : "Vendor"}
+                    </div>
                     <select
                       className="input"
                       value={selectedVendor?.id || ""}
@@ -1144,7 +1146,7 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                   <Button className="btn" onClick={() => setActiveView("Vendors")}>
-                    Manage vendors
+                    {appMode === "enterprise" ? "Manage assets" : "Manage vendors"}
                   </Button>
                 </div>
               </div>
@@ -1153,7 +1155,9 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
                 <>
                   <Divider />
                   <div style={{ fontSize: 13, opacity: 0.85 }}>
-                    No vendor selected yet. Go to <strong>Vendors</strong> and create one.
+                    {appMode === "enterprise"
+                      ? <>No asset selected yet. Go to <strong>Vendors</strong> and create one (used as assets in this phase).</>
+                      : <>No vendor selected yet. Go to <strong>Vendors</strong> and create one.</>}
                   </div>
                 </>
               ) : null}
@@ -1190,7 +1194,9 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
             <Card>
               <div style={{ fontSize: 18, fontWeight: 900 }}>No vendor</div>
               <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
-                Create a vendor first in <strong>Vendors</strong>.
+                {appMode === "enterprise"
+                  ? <>Create an asset first in <strong>Vendors</strong> (asset registry in phase 1).</>
+                  : <>Create a vendor first in <strong>Vendors</strong>.</>}
               </div>
             </Card>
           ) : needsScenario && !selectedScenario ? (
@@ -1208,6 +1214,7 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     updateVendor={updateVendor}
     setActiveView={setActiveView}
     selectScenario={selectScenario}
+    appMode={appMode}
   />
 ) : activeView === "Quantify" ? (
             <QuantifyView
@@ -1223,9 +1230,10 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     vendor={selectedVendor}
     scenario={selectedScenario}
     updateVendor={updateVendor}
+    appMode={appMode}
   />
 ) : activeView === "Decisions" ? (
-            <DecisionsView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} />
+            <DecisionsView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} appMode={appMode} />
           ) : activeView === "Dashboard" ? (
   <DashboardView
     vendors={vendors}
@@ -1234,6 +1242,8 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     selectScenario={selectScenario}
     updateVendor={updateVendor}
     updateManyVendors={updateManyVendors}
+    appMode={appMode}
+    focusedVendorId={selectedVendor?.id || ""}
   />
 ) : (
             <Card>

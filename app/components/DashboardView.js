@@ -546,6 +546,8 @@ export default function DashboardView({
   selectVendor,
   selectScenario,
   updateVendor,
+  appMode = "tprm",
+  focusedVendorId = "",
 }) {
   const [query, setQuery] = useState("");
   const [vendorFilter, setVendorFilter] = useState("all");
@@ -576,6 +578,12 @@ export default function DashboardView({
     }
     return Array.from(m.entries()).map(([id, name]) => ({ id, name }));
   }, [rows]);
+
+  useEffect(() => {
+    if (appMode !== "enterprise") return;
+    if (!focusedVendorId) return;
+    setVendorFilter(focusedVendorId);
+  }, [appMode, focusedVendorId]);
 
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -797,7 +805,9 @@ export default function DashboardView({
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <div>
-            <div style={{ fontSize: 22, fontWeight: 950 }}>Critical Scenario Map</div>
+            <div style={{ fontSize: 22, fontWeight: 950 }}>
+              {appMode === "enterprise" ? "Enterprise Scenario Map" : "Critical Scenario Map"}
+            </div>
             <div style={{ marginTop: 6, opacity: 0.82, fontSize: 13 }}>
               One-screen prioritization across all vendors: frequency vs magnitude, with criticality-encoded points.
             </div>
@@ -812,7 +822,7 @@ export default function DashboardView({
 
         <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <select className="input" style={{ width: 220 }} value={vendorFilter} onChange={(e) => setVendorFilter(e.target.value)}>
-            <option value="all">All vendors</option>
+            <option value="all">{appMode === "enterprise" ? "All assets" : "All vendors"}</option>
             {vendorOptions.map((v) => (
               <option key={v.id} value={v.id}>
                 {v.name}

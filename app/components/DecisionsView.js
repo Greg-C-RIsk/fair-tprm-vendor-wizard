@@ -125,12 +125,13 @@ function toneFromDelta(deltaPct) {
   return "rgba(245,158,11,0.35)";
 }
 
-export default function DecisionsView({ vendor, scenario, updateVendor }) {
+export default function DecisionsView({ vendor, scenario, updateVendor, appMode = "tprm" }) {
+  const entityLabel = appMode === "enterprise" ? "asset" : "vendor";
   if (!vendor) {
     return (
       <Card>
         <div style={{ fontSize: 18, fontWeight: 950 }}>Decisions</div>
-        <div style={{ marginTop: 8, opacity: 0.8 }}>Select a vendor first.</div>
+        <div style={{ marginTop: 8, opacity: 0.8 }}>Select a {entityLabel} first.</div>
       </Card>
     );
   }
@@ -266,7 +267,8 @@ export default function DecisionsView({ vendor, scenario, updateVendor }) {
           <div>
             <div style={{ fontSize: 22, fontWeight: 980 }}>Decision Record</div>
             <div style={{ marginTop: 6, opacity: 0.85, fontSize: 13 }}>
-              Vendor: <strong>{vendor.name?.trim() ? vendor.name : "(Unnamed vendor)"}</strong> · Scenario: <strong>{scenario.title?.trim() ? scenario.title : "(Untitled scenario)"}</strong>
+              {appMode === "enterprise" ? "Asset" : "Vendor"}:{" "}
+              <strong>{vendor.name?.trim() ? vendor.name : appMode === "enterprise" ? "(Unnamed asset)" : "(Unnamed vendor)"}</strong> · Scenario: <strong>{scenario.title?.trim() ? scenario.title : "(Untitled scenario)"}</strong>
             </div>
           </div>
 

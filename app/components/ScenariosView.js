@@ -27,7 +27,8 @@ function Field({ label, value, onChange, placeholder, textarea }) {
   );
 }
 
-export default function ScenariosView({ vendor, updateVendor, setActiveView, selectScenario }) {
+export default function ScenariosView({ vendor, updateVendor, setActiveView, selectScenario, appMode = "tprm" }) {
+  const entityLabel = appMode === "enterprise" ? "asset" : "vendor";
   const vendorScenarios = useMemo(() => {
     return Array.isArray(vendor?.scenarios) ? vendor.scenarios : [];
   }, [vendor]);
@@ -83,7 +84,7 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView, sel
       <div className="card">
         <h2 style={{ margin: 0 }}>Scenarios</h2>
         <p style={{ opacity: 0.8, marginTop: 8 }}>
-          No vendor selected. Go to <strong>Vendors</strong> first.
+          No {entityLabel} selected. Go to <strong>Vendors</strong> first.
         </p>
       </div>
     );
