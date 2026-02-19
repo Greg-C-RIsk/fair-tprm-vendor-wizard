@@ -24,6 +24,25 @@ import {
 
 const LS_KEY = "fair_tprm_training_v6";
 
+function formatCompact(n, currency = false) {
+  const value = Number(n);
+  if (!Number.isFinite(value)) return "—";
+
+  if (currency) {
+    return new Intl.NumberFormat("en-GB", {
+      style: "currency",
+      currency: "EUR",
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(value);
+  }
+
+  return new Intl.NumberFormat("en-GB", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
 function makeSamples(mid, count = 240, spread = 0.28, phase = 0) {
   const base = Math.max(1, Number(mid) || 1);
   const out = [];
@@ -432,14 +451,7 @@ class ErrorBoundary extends Component {
     if (this.state.hasError) {
       return (
         <div className="container" style={{ padding: 22, maxWidth: 1200, margin: "0 auto" }}>
-          <div
-            style={{
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: "rgba(0,0,0,0.18)",
-              borderRadius: 16,
-              padding: 16,
-            }}
-          >
+          <div className="card" style={{ padding: 16 }}>
             <div style={{ fontSize: 18, fontWeight: 900 }}>Application error</div>
             <div style={{ marginTop: 8, opacity: 0.85, fontSize: 13 }}>
               Une exception JS s’est produite. Ouvre la console pour le détail.
@@ -477,13 +489,12 @@ function InputRow({ label, children }) {
 function Pill({ children }) {
   return (
     <span
+      className="chip-pill"
       style={{
         display: "inline-flex",
         alignItems: "center",
         padding: "4px 10px",
         borderRadius: 999,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(255,255,255,0.06)",
         fontSize: 12,
         opacity: 0.95,
         gap: 6,
@@ -495,15 +506,12 @@ function Pill({ children }) {
   );
 }
 
-function Card({ children, style }) {
+function Card({ children, style, className = "" }) {
   return (
     <div
+      className={className ? `card ${className}` : "card"}
       style={{
-        border: "1px solid rgba(255,255,255,0.12)",
-        background: "rgba(0,0,0,0.18)",
-        borderRadius: 16,
         padding: 16,
-        backdropFilter: "blur(8px)",
         ...style,
       }}
     >
@@ -1239,7 +1247,51 @@ export default function Page() {
   }, [vendors, assets, appMode]);
 
   const activeEntities = appMode === "enterprise" ? assets : vendors;
-  const showContextBar = !vendorForm.open && !["Vendors", "Assets"].includes(activeView);
+  const showContextBar = !vendorForm.open && !["Vendors", "Assets", "Dashboard"].includes(activeView);
+  const activeTabLabel = tabs.find((t) => t.k === activeView)?.label || activeView;
+  const selectedAleP90 = Number(selectedScenario?.quant?.stats?.ale?.p90);
+  const selectedControlCount = Array.isArray(selectedScenario?.controls) ? selectedScenario.controls.length : 0;
+
+  const navIcons = useMemo(
+    () => ({
+      Vendors: "V",
+      Assets: "A",
+      Tiering: "T",
+      Scenarios: "S",
+      Quantify: "Q",
+      Results: "R",
+      Treatments: "T",
+      Decisions: "D",
+      Dashboard: "D",
+    }),
+    []
+  );
+
+  const kpiTiles = useMemo(
+    () => [
+      {
+        title: appMode === "enterprise" ? "Assets" : "Vendors",
+        value: formatCompact(activeEntities.length),
+        accent: "brand1",
+      },
+      {
+        title: "Scenarios",
+        value: formatCompact(totalScenarios),
+        accent: "brand2",
+      },
+      {
+        title: "Controls",
+        value: formatCompact(selectedControlCount),
+        accent: "mix",
+      },
+      {
+        title: "Selected ALE p90",
+        value: formatCompact(selectedAleP90, true),
+        accent: "brand2",
+      },
+    ],
+    [appMode, activeEntities.length, totalScenarios, selectedControlCount, selectedAleP90]
+  );
 
   // Guards (évite crash si scenario null)
   const needsVendor = !["Vendors", "Assets"].includes(activeView);
@@ -1247,13 +1299,57 @@ export default function Page() {
 
   return (
     <ErrorBoundary>
-      <div className="container" style={{ padding: 22, maxWidth: 1200, margin: "0 auto" }}>
-        {/* Title */}
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
-          <div>
-            <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.02em" }}>FAIR Risk Studio</div>
-            <div style={{ marginTop: 6, opacity: 0.8 }}>Training only — data stays in your browser.</div>
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="container saas-shell">
+        <aside className="saas-sidebar">
+          <div className="saas-brand">
+            <img
+              className="saas-brand-logo"
+              src="/c-risk-logo.svg"
+              alt="C-Risk"
+              width={208}
+              height={102}
+              style={{ width: 208, height: "auto", maxWidth: "100%" }}
+            />
+            <div className="saas-brand-subtitle">FAIR Risk Studio</div>
+          </div>
+
+          <div className="saas-section">
+            <div className="saas-section-title">Mode</div>
+            <div className="saas-mode-grid">
+              <button
+                onClick={() => setAppMode("enterprise")}
+                className={`mode-chip enterprise ${appMode === "enterprise" ? "active" : ""}`}
+              >
+                Enterprise
+              </button>
+              <button
+                onClick={() => setAppMode("tprm")}
+                className={`mode-chip tprm ${appMode === "tprm" ? "active" : ""}`}
+              >
+                TPRM
+              </button>
+            </div>
+          </div>
+
+          <div className="saas-section">
+            <div className="saas-section-title">Navigation</div>
+            <div className="saas-nav-list">
+              {tabs.map((t) => (
+                <button
+                  key={t.k}
+                  onClick={() => setActiveView(t.k)}
+                  className={`view-chip ${activeView === t.k ? "active" : ""}`}
+                >
+                  <span className="saas-nav-icon">{navIcons[t.k] || t.label?.charAt(0) || "•"}</span>
+                  <span>{t.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="saas-section">
+            <div className="saas-section-title">Workspace</div>
+            <div className="saas-sidebar-metrics">
               <Pill>Mode: {appMode === "enterprise" ? "Enterprise" : "TPRM"}</Pill>
               <Pill>{activeEntities.length} {appMode === "enterprise" ? "asset(s)" : "vendor(s)"}</Pill>
               <Pill>{totalScenarios} scenario(s)</Pill>
@@ -1261,125 +1357,101 @@ export default function Page() {
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div className="saas-sidebar-actions">
             <Button className="btn primary" onClick={loadTestData}>
               Load test data
             </Button>
             <Button className="btn" onClick={resetAll}>
               Reset
             </Button>
+            <Button className="btn ghost" onClick={() => setActiveView(appMode === "enterprise" ? "Assets" : "Vendors")}>
+              {appMode === "enterprise" ? "Manage assets" : "Manage vendors"}
+            </Button>
           </div>
-        </div>
+        </aside>
 
-        {/* Tabs */}
-        <div style={{ marginTop: 14 }}>
-          <Card style={{ padding: 10 }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-              <button
-                onClick={() => setAppMode("enterprise")}
-                style={{
-                  border: "1px solid rgba(255,255,255,0.14)",
-                  background: appMode === "enterprise" ? "rgba(16,185,129,0.24)" : "rgba(255,255,255,0.06)",
-                  color: "inherit",
-                  borderRadius: 999,
-                  padding: "8px 12px",
-                  cursor: "pointer",
-                  fontWeight: 800,
-                  fontSize: 13,
-                }}
-              >
-                Enterprise
-              </button>
-              <button
-                onClick={() => setAppMode("tprm")}
-                style={{
-                  border: "1px solid rgba(255,255,255,0.14)",
-                  background: appMode === "tprm" ? "rgba(59,130,246,0.22)" : "rgba(255,255,255,0.06)",
-                  color: "inherit",
-                  borderRadius: 999,
-                  padding: "8px 12px",
-                  cursor: "pointer",
-                  fontWeight: 800,
-                  fontSize: 13,
-                }}
-              >
-                TPRM
-              </button>
+        <main className="saas-main">
+          <div className="saas-topbar-card">
+            <div className="saas-topbar">
+              <div className="saas-search-wrap">
+                <span className="saas-search-icon">⌕</span>
+                <input className="input saas-search-input" placeholder="Search vendor, scenario, decision..." />
+              </div>
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {tabs.map((t) => (
-                <button
-                  key={t.k}
-                  onClick={() => setActiveView(t.k)}
-                  style={{
-                    border: "1px solid rgba(255,255,255,0.14)",
-                    background: activeView === t.k ? "rgba(59,130,246,0.22)" : "rgba(255,255,255,0.06)",
-                    color: "inherit",
-                    borderRadius: 999,
-                    padding: "8px 12px",
-                    cursor: "pointer",
-                    fontWeight: 800,
-                    fontSize: 13,
-                    opacity: activeView === t.k ? 1 : 0.92,
-                  }}
-                >
-                  {t.label}
-                </button>
+          </div>
+
+          <div className="saas-kpis-card">
+            <div className="saas-kpi-grid">
+              {kpiTiles.map((kpi) => (
+                <div key={kpi.title} className={`saas-kpi-tile ${kpi.accent}`}>
+                  <div className="saas-kpi-dot" />
+                  <div className="saas-kpi-title">{kpi.title}</div>
+                  <div className="saas-kpi-value">{kpi.value}</div>
+                </div>
               ))}
             </div>
-          </Card>
-        </div>
+          </div>
 
-        {/* Context bar */}
-        {showContextBar ? (
-          <div style={{ marginTop: 14 }}>
-            <Card style={{ padding: 12 }}>
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                  <div style={{ fontSize: 13, opacity: 0.85, fontWeight: 800 }}>Context</div>
+          <div className="saas-title-card">
+            <div className="saas-top-row">
+              <div>
+                <div className="saas-page-title">{activeTabLabel}</div>
+                <div className="saas-page-subtitle">
+                  {appMode === "enterprise"
+                    ? "Enterprise cyber risk analysis across internal assets."
+                    : "Third-party cyber risk workflow across vendors."}
+                </div>
+              </div>
 
-                  <div style={{ minWidth: 260 }}>
-                    <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>
-                      {appMode === "enterprise" ? "Asset" : "Vendor"}
-                    </div>
-                    <select
-                      className="input"
-                      value={selectedContext?.id || ""}
-                      onChange={(e) => selectVendor(e.target.value)}
-                      disabled={!activeEntities.length}
-                    >
-                      {activeEntities.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.name?.trim() ? v.name : "(Unnamed vendor)"}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+              <div className="saas-top-pills">
+                <Pill>{selectedContext?.name?.trim() || (appMode === "enterprise" ? "No asset selected" : "No vendor selected")}</Pill>
+                <Pill>{selectedScenario?.title?.trim() || "No scenario selected"}</Pill>
+              </div>
+            </div>
+          </div>
 
-                  <div style={{ minWidth: 320 }}>
-                    <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Scenario</div>
-                    <select
-                      className="input"
-                      value={selectedScenario?.id || ""}
-                      onChange={(e) => selectScenario(e.target.value)}
-                      disabled={!selectedContext || !Array.isArray(selectedContext?.scenarios) || selectedContext.scenarios.length === 0}
-                    >
-                      {(selectedContext?.scenarios || []).map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.title?.trim() ? s.title : "(Untitled scenario)"}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                    <Pill>Index: {selectedContext ? tierIndex(selectedContext.tiering || emptyTiering()) : "—"}</Pill>
-                    <Pill>Tier: {selectedContext?.tier || "—"}</Pill>
-                  </div>
+          {showContextBar ? (
+            <div className="saas-context-card">
+              <div className="saas-context-grid">
+                <div className="saas-context-item">
+                  <div className="saas-context-label">{appMode === "enterprise" ? "Asset" : "Vendor"}</div>
+                  <select
+                    className="input"
+                    value={selectedContext?.id || ""}
+                    onChange={(e) => selectVendor(e.target.value)}
+                    disabled={!activeEntities.length}
+                  >
+                    {activeEntities.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.name?.trim() ? v.name : appMode === "enterprise" ? "(Unnamed asset)" : "(Unnamed vendor)"}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  <Button className="btn" onClick={() => setActiveView(appMode === "enterprise" ? "Assets" : "Vendors")}>
+                <div className="saas-context-item">
+                  <div className="saas-context-label">Scenario</div>
+                  <select
+                    className="input"
+                    value={selectedScenario?.id || ""}
+                    onChange={(e) => selectScenario(e.target.value)}
+                    disabled={!selectedContext || !Array.isArray(selectedContext?.scenarios) || selectedContext.scenarios.length === 0}
+                  >
+                    {(selectedContext?.scenarios || []).map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.title?.trim() ? s.title : "(Untitled scenario)"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="saas-context-meta">
+                  <Pill>Index: {selectedContext ? tierIndex(selectedContext.tiering || emptyTiering()) : "—"}</Pill>
+                  <Pill>Tier: {selectedContext?.tier || "—"}</Pill>
+                </div>
+
+                <div className="saas-context-cta">
+                  <Button className="btn ghost" onClick={() => setActiveView(appMode === "enterprise" ? "Assets" : "Vendors")}>
                     {appMode === "enterprise" ? "Manage assets" : "Manage vendors"}
                   </Button>
                 </div>
@@ -1390,17 +1462,15 @@ export default function Page() {
                   <Divider />
                   <div style={{ fontSize: 13, opacity: 0.85 }}>
                     {appMode === "enterprise"
-                      ? <>No asset selected yet. Go to <strong>Vendors</strong> and create one (used as assets in this phase).</>
+                      ? <>No asset selected yet. Go to <strong>Assets</strong> and create one.</>
                       : <>No vendor selected yet. Go to <strong>Vendors</strong> and create one.</>}
                   </div>
                 </>
               ) : null}
-            </Card>
-          </div>
-        ) : null}
+            </div>
+          ) : null}
 
-        {/* Main */}
-        <div style={{ marginTop: 14 }}>
+          <div className="saas-workspace">
           {!hydrated ? (
             <Card>
               <div style={{ fontSize: 16, fontWeight: 900 }}>Loading…</div>
@@ -1516,7 +1586,8 @@ export default function Page() {
               </div>
             </Card>
           )}
-        </div>
+          </div>
+        </main>
       </div>
     </ErrorBoundary>
   );

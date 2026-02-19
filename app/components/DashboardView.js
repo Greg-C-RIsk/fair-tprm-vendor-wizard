@@ -244,16 +244,7 @@ function extractScenarioRows(vendors, origin = "tprm") {
 
 function Card({ children, style }) {
   return (
-    <div
-      className="card"
-      style={{
-        border: "1px solid rgba(255,255,255,0.12)",
-        background: "rgba(0,0,0,0.18)",
-        borderRadius: 16,
-        padding: 16,
-        ...style,
-      }}
-    >
+    <div className="card" style={{ padding: 16, ...style }}>
       {children}
     </div>
   );
@@ -271,11 +262,13 @@ function Tooltip({ hover }) {
         top: y + 12,
         zIndex: 60,
         pointerEvents: "none",
-        border: "1px solid rgba(255,255,255,0.16)",
-        background: "rgba(0,0,0,0.72)",
+        border: "1px solid rgba(255,255,255,0.18)",
+        background: "rgba(26,22,40,0.96)",
         borderRadius: 12,
         padding: 10,
-        backdropFilter: "blur(6px)",
+        color: "#f8f7ff",
+        boxShadow: "0 12px 24px rgba(0,0,0,0.34)",
+        backdropFilter: "blur(4px)",
         minWidth: 220,
       }}
     >
@@ -339,19 +332,19 @@ function ScatterPlot({ rows, selectedKey, onSelect, onHover, floatT }) {
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
-      <rect x={0} y={0} width={W} height={H} fill="rgba(255,255,255,0.02)" rx={12} />
+      <rect x={0} y={0} width={W} height={H} fill="rgba(0,0,0,0.02)" rx={12} />
 
       {[0, 0.25, 0.5, 0.75, 1].map((g) => {
         const y = pad.t + g * (H - pad.t - pad.b);
-        return <line key={`gy${g}`} x1={pad.l} y1={y} x2={W - pad.r} y2={y} stroke="rgba(255,255,255,0.08)" />;
+        return <line key={`gy${g}`} x1={pad.l} y1={y} x2={W - pad.r} y2={y} stroke="rgba(0,0,0,0.10)" />;
       })}
       {[0, 0.25, 0.5, 0.75, 1].map((g) => {
         const x = pad.l + g * (W - pad.l - pad.r);
-        return <line key={`gx${g}`} x1={x} y1={pad.t} x2={x} y2={H - pad.b} stroke="rgba(255,255,255,0.06)" />;
+        return <line key={`gx${g}`} x1={x} y1={pad.t} x2={x} y2={H - pad.b} stroke="rgba(0,0,0,0.08)" />;
       })}
 
-      <line x1={pad.l} y1={pad.t} x2={pad.l} y2={H - pad.b} stroke="rgba(255,255,255,0.4)" />
-      <line x1={pad.l} y1={H - pad.b} x2={W - pad.r} y2={H - pad.b} stroke="rgba(255,255,255,0.4)" />
+      <line x1={pad.l} y1={pad.t} x2={pad.l} y2={H - pad.b} stroke="rgba(0,0,0,0.45)" />
+      <line x1={pad.l} y1={H - pad.b} x2={W - pad.r} y2={H - pad.b} stroke="rgba(0,0,0,0.45)" />
 
       <text x={W / 2} y={H - 12} textAnchor="middle" fill="currentColor" opacity="0.82" fontSize="12" fontWeight="700">
         Frequency (events/year)
@@ -848,39 +841,59 @@ export default function DashboardView({
           </div>
         </div>
 
-        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <select className="input" style={{ width: 170 }} value={scope} onChange={(e) => setScope(e.target.value)}>
-            <option value="tprm">TPRM view</option>
-            <option value="enterprise">Enterprise view</option>
-            <option value="global">Global view</option>
-          </select>
-          <select className="input" style={{ width: 220 }} value={vendorFilter} onChange={(e) => setVendorFilter(e.target.value)}>
-            <option value="all">
-              {scope === "enterprise" ? "All assets" : scope === "tprm" ? "All vendors" : "All entities"}
-            </option>
-            {vendorOptions.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name}
-              </option>
-            ))}
-          </select>
-          <select className="input" style={{ width: 170 }} value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)}>
-            <option value="all">All levels</option>
-            <option value="LEF">LEF</option>
-            <option value="TEF">TEF</option>
-            <option value="Contact Frequency">Contact Frequency</option>
-          </select>
-          <input
-            className="input"
-            style={{ maxWidth: 280 }}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search vendor or scenario"
-          />
-          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, opacity: 0.9 }}>
-            <input type="checkbox" checked={hideMissing} onChange={(e) => setHideMissing(e.target.checked)} />
-            Hide missing results
-          </label>
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 11, letterSpacing: 0.4, fontWeight: 900, opacity: 0.72, textTransform: "uppercase" }}>
+            Dashboard filters
+          </div>
+          <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, alignItems: "end" }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 800, opacity: 0.9 }}>
+              Scope
+              <select className="input" value={scope} onChange={(e) => setScope(e.target.value)}>
+                <option value="tprm">TPRM</option>
+                <option value="enterprise">Enterprise</option>
+                <option value="global">Global</option>
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 800, opacity: 0.9 }}>
+              {scope === "enterprise" ? "Asset" : scope === "tprm" ? "Vendor" : "Entity"}
+              <select className="input" value={vendorFilter} onChange={(e) => setVendorFilter(e.target.value)}>
+                <option value="all">
+                  {scope === "enterprise" ? "All assets" : scope === "tprm" ? "All vendors" : "All entities"}
+                </option>
+                {vendorOptions.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 800, opacity: 0.9 }}>
+              Scenario level
+              <select className="input" value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)}>
+                <option value="all">All levels</option>
+                <option value="LEF">LEF</option>
+                <option value="TEF">TEF</option>
+                <option value="Contact Frequency">Contact Frequency</option>
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 800, opacity: 0.9 }}>
+              Search
+              <input
+                className="input"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Entity or scenario"
+              />
+            </label>
+
+            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, opacity: 0.9, paddingBottom: 8 }}>
+              <input type="checkbox" checked={hideMissing} onChange={(e) => setHideMissing(e.target.checked)} />
+              Hide missing results
+            </label>
+          </div>
         </div>
       </Card>
 
@@ -929,8 +942,8 @@ export default function DashboardView({
                     style={{
                       textAlign: "left",
                       padding: 10,
-                      borderColor: selected ? "rgba(24,184,167,0.7)" : "rgba(255,255,255,0.18)",
-                      background: selected ? "rgba(24,184,167,0.16)" : "rgba(255,255,255,0.04)",
+                      borderColor: selected ? "rgba(128,46,255,0.62)" : "rgba(34,24,54,0.16)",
+                      background: selected ? "rgba(128,46,255,0.12)" : "#ffffff",
                     }}
                   >
                     <div style={{ fontSize: 12, fontWeight: 900 }}>{r.vendorName}</div>
@@ -944,7 +957,7 @@ export default function DashboardView({
             )}
           </div>
 
-          <div style={{ marginTop: 12, borderTop: "1px solid rgba(255,255,255,0.10)", paddingTop: 10, display: "grid", gap: 6 }}>
+          <div style={{ marginTop: 12, borderTop: "1px solid rgba(34,24,54,0.12)", paddingTop: 10, display: "grid", gap: 6 }}>
             <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>Legend</div>
             <div style={{ fontSize: 12, opacity: 0.8 }}>Point position: X = frequency, Y = magnitude</div>
             <div style={{ fontSize: 12, opacity: 0.8 }}>Point size/color: higher = more critical</div>

@@ -62,16 +62,7 @@ function suggestTierFromIndex(idx) {
 
 function Card({ children, style }) {
   return (
-    <div
-      className="card"
-      style={{
-        border: "1px solid rgba(255,255,255,0.12)",
-        background: "rgba(0,0,0,0.18)",
-        borderRadius: 16,
-        padding: 16,
-        ...style,
-      }}
-    >
+    <div className="card" style={{ padding: 16, ...style }}>
       {children}
     </div>
   );
