@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { emptyTiering, tierIndex } from "../../lib/model";
+import { DecisionNarrative, HorizontalBarList, ScoreGauge } from "./DecisionViz";
 
 function clampInt(n, min, max) {
   const x = Number(n);
@@ -233,6 +234,26 @@ export default function TieringView({ vendor, updateVendor }) {
   const suggested = useMemo(() => suggestTierFromIndex(idx), [idx]);
 
   const effectiveTier = tierOverride?.trim() ? tierOverride.trim() : suggested.tier;
+  const factorProfile = useMemo(() => {
+    return Object.keys(localTiering || {}).map((k) => ({
+      key: k,
+      label: factorLabel(k),
+      value: Number(localTiering[k] || 1),
+    }));
+  }, [localTiering]);
+
+  const topDrivers = useMemo(() => {
+    return [...factorProfile]
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 2)
+      .map((x) => x.label);
+  }, [factorProfile]);
+
+  const decisionTone = useMemo(() => {
+    if (effectiveTier === "Tier 1") return "bad";
+    if (effectiveTier === "Tier 2") return "warn";
+    return "good";
+  }, [effectiveTier]);
 
   const patchFactor = (k, v) => {
     setLocalTiering((prev) => ({ ...prev, [k]: clampInt(v, 1, 5) }));
@@ -348,6 +369,35 @@ export default function TieringView({ vendor, updateVendor }) {
           <div style={{ fontSize: 16, fontWeight: 950 }}>Rationale (recommended)</div>
           <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
             Write 2–5 lines explaining why this tier makes sense (good for auditability & training).
+          </div>
+
+          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+            <ScoreGauge
+              title="Tier index progression"
+              subtitle="Relative position in the 1 to 3,125 range."
+              score={idx}
+              max={3125}
+            />
+
+            <HorizontalBarList
+              title="Factor profile"
+              subtitle="Higher scores are the strongest tier drivers."
+              items={factorProfile}
+              valueFormatter={(v) => `${Math.round(v)}/5`}
+              tone="rgba(236,120,51,0.9)"
+            />
+
+            <DecisionNarrative
+              tone={decisionTone}
+              title="Decision insight"
+              message={
+                effectiveTier === "Tier 1"
+                  ? `This context is currently high criticality. Primary decision question: which controls and governance gates are mandatory before acceptance? Main drivers: ${topDrivers.join(", ") || "n/a"}.`
+                  : effectiveTier === "Tier 2"
+                  ? `This context is medium criticality. Primary decision question: do planned controls keep residual risk inside policy thresholds? Main drivers: ${topDrivers.join(", ") || "n/a"}.`
+                  : `This context is lower criticality. Primary decision question: can this be accepted with monitoring and periodic review? Main drivers: ${topDrivers.join(", ") || "n/a"}.`
+              }
+            />
           </div>
 
           <textarea

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { BaselineResidualCompare, DecisionNarrative, MiniSparkline, ScoreGauge } from "./DecisionViz";
 
 const RATING_ML = {
   "N/A": 0,
@@ -448,6 +449,8 @@ function ScenarioDetails({
   proposedControls,
   baseline,
   residual,
+  baselineSeries,
+  residualSeries,
   deltaP50,
   deltaP90,
   draftDirty,
@@ -499,6 +502,74 @@ function ScenarioDetails({
 
       <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9 }}>
         Delta p50: {moneyEUR(deltaP50)} · Delta p90: {moneyEUR(deltaP90)}
+      </div>
+
+      <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <BaselineResidualCompare
+          title="ALE p50"
+          baselineValue={baseline?.p50}
+          residualValue={residual?.p50}
+        />
+        <BaselineResidualCompare
+          title="ALE p90"
+          baselineValue={baseline?.p90}
+          residualValue={residual?.p90}
+        />
+      </div>
+
+      <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div
+          style={{
+            border: "1px solid rgba(255,255,255,0.10)",
+            borderRadius: 12,
+            padding: 10,
+            background: "rgba(255,255,255,0.03)",
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 900 }}>Baseline distribution preview</div>
+          <div style={{ marginTop: 6 }}>
+            <MiniSparkline values={baselineSeries} stroke="rgba(236,120,51,0.95)" fill="rgba(236,120,51,0.14)" />
+          </div>
+        </div>
+        <div
+          style={{
+            border: "1px solid rgba(255,255,255,0.10)",
+            borderRadius: 12,
+            padding: 10,
+            background: "rgba(255,255,255,0.03)",
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 900 }}>Residual distribution preview</div>
+          <div style={{ marginTop: 6 }}>
+            <MiniSparkline values={residualSeries} stroke="rgba(128,46,255,0.95)" fill="rgba(128,46,255,0.14)" />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <ScoreGauge
+          title="Risk reduction score"
+          subtitle="Reduction based on ALE p90."
+          score={
+            Number.isFinite(baseline?.p90) && Number.isFinite(residual?.p90) && baseline.p90 > 0
+              ? clamp(((baseline.p90 - residual.p90) / baseline.p90) * 100, 0, 100)
+              : 0
+          }
+          max={100}
+        />
+        <DecisionNarrative
+          tone={Number.isFinite(deltaP90) ? (deltaP90 <= -15 ? "good" : deltaP90 < 5 ? "warn" : "bad") : "info"}
+          title="Decision insight"
+          message={
+            Number.isFinite(deltaP90)
+              ? deltaP90 <= -15
+                ? "Residual risk is materially lower than baseline. Candidate decision: conditional approval with controls and review date."
+                : deltaP90 < 5
+                ? "Residual risk is close to baseline. Candidate decision: monitor closely or request stronger targeted controls."
+                : "Residual risk does not improve enough. Candidate decision: redesign treatment plan, transfer, or avoid."
+              : "No quantitative delta yet. Use Results and Treatments to complete a decision-grade comparison."
+          }
+        />
       </div>
 
       <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
@@ -671,6 +742,7 @@ export default function DashboardView({
     if (!selectedRow) return null;
 
     const baselineFromSamples = statsFromSamples(selectedRow.samples);
+    const baselineSeries = baselineFromSamples ? selectedRow.samples : [];
     const baseline = baselineFromSamples || {
       p10: null,
       p50: selectedRow.aleP50,
@@ -682,9 +754,11 @@ export default function DashboardView({
     const enabledProposed = proposedDraft.filter((c) => c.enabled !== false);
 
     let residual = null;
+    let residualSeries = [];
     if (baselineFromSamples) {
       const transformed = transformSamples(selectedRow.samples, enabledProposed);
       residual = statsFromSamples(transformed);
+      residualSeries = transformed;
     } else if (baseline) {
       const { freqCut, magCut } = aggregateControlCuts(enabledProposed);
       const mult = (1 - freqCut) * (1 - magCut);
@@ -698,6 +772,8 @@ export default function DashboardView({
     return {
       baseline,
       residual,
+      baselineSeries,
+      residualSeries,
       deltaP50:
         Number.isFinite(residual?.p50) && Number.isFinite(baseline?.p50)
           ? residual.p50 - baseline.p50
@@ -895,6 +971,14 @@ export default function DashboardView({
             </label>
           </div>
         </div>
+
+        <div style={{ marginTop: 10 }}>
+          <DecisionNarrative
+            tone="info"
+            title="How to use filters"
+            message="Use Scope first (TPRM / Enterprise / Global), then narrow with Entity and Scenario level. Search is the last refinement step."
+          />
+        </div>
       </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14, alignItems: "start" }}>
@@ -972,6 +1056,8 @@ export default function DashboardView({
         proposedControls={proposedDraft}
         baseline={riskSummary?.baseline}
         residual={riskSummary?.residual}
+        baselineSeries={riskSummary?.baselineSeries}
+        residualSeries={riskSummary?.residualSeries}
         deltaP50={riskSummary?.deltaP50}
         deltaP90={riskSummary?.deltaP90}
         draftDirty={draftDirty}

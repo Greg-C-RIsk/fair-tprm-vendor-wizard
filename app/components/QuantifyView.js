@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ensureQuant, runFairMonteCarlo } from "../../lib/fairEngine";
+import { DecisionNarrative, HorizontalBarList, ScoreGauge } from "./DecisionViz";
 
 function toNum(x) {
   if (x === null || x === undefined) return null;
@@ -186,6 +187,58 @@ export default function QuantifyView({ vendor, scenario, updateVendor }) {
     return tefML * suscML;
   }, [level, q.lef, tefML, suscML]);
 
+  const triadQuality = (label, triad, minBound = null, maxBound = null) => {
+    const min = toNum(triad?.min);
+    const ml = toNum(triad?.ml);
+    const max = toNum(triad?.max);
+    const values = [min, ml, max];
+    const filled = values.filter((v) => v !== null).length;
+    const hasAll = filled === 3;
+    const ordered = hasAll ? min <= ml && ml <= max : false;
+    const bounded =
+      hasAll && minBound !== null && maxBound !== null
+        ? min >= minBound && max <= maxBound
+        : true;
+
+    let score = filled;
+    if (ordered) score += 1;
+    if (hasAll && minBound !== null && maxBound !== null && bounded) score += 1;
+
+    const total = minBound !== null && maxBound !== null ? 5 : 4;
+    return {
+      label,
+      qualityPct: (score / total) * 100,
+      hasAll,
+      ordered,
+      bounded,
+    };
+  };
+
+  const triadQualityRows = useMemo(() => {
+    const rows = [];
+    if (level === "LEF") rows.push(triadQuality("LEF", q.lef));
+    if (level === "TEF") {
+      rows.push(triadQuality("TEF", q.tef));
+      rows.push(triadQuality("Susceptibility", q.susceptibility, 0, 1));
+    }
+    if (level === "Contact Frequency") {
+      rows.push(triadQuality("Contact Frequency", q.contactFrequency));
+      rows.push(triadQuality("Probability of Action", q.probabilityOfAction, 0, 1));
+      rows.push(triadQuality("Threat Capacity", q.threatCapacity));
+      rows.push(triadQuality("Resistance Strength", q.resistanceStrength));
+    }
+    rows.push(triadQuality("Primary Loss", q.primaryLoss));
+    rows.push(triadQuality("Secondary LEF", q.secondaryLossEventFrequency));
+    rows.push(triadQuality("Secondary LM", q.secondaryLossMagnitude));
+    return rows;
+  }, [level, q]);
+
+  const qualityScore = useMemo(() => {
+    if (!triadQualityRows.length) return 0;
+    const total = triadQualityRows.reduce((sum, r) => sum + r.qualityPct, 0);
+    return total / triadQualityRows.length;
+  }, [triadQualityRows]);
+
   const patch = (p) => {
     setQ((prev) => ensureQuant({ ...prev, ...p }));
     setIsDirty(true);
@@ -362,6 +415,39 @@ export default function QuantifyView({ vendor, scenario, updateVendor }) {
     </div>
   </Card>
 </div>
+
+      <Card>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
+          <ScoreGauge
+            title="Quantification quality"
+            subtitle="Are the current inputs decision-grade?"
+            score={qualityScore}
+            max={100}
+          />
+
+          <DecisionNarrative
+            tone={qualityScore >= 80 ? "good" : qualityScore >= 55 ? "warn" : "bad"}
+            title="Decision reliability"
+            message={
+              qualityScore >= 80
+                ? "Input quality is strong enough for management discussions. Validate assumptions and run sensitivity checks before final decision."
+                : qualityScore >= 55
+                ? "Results are directionally useful, but uncertainty remains high. Tighten key triads before using p90 thresholds as hard decision gates."
+                : "Input quality is too weak for decision commitment. Complete and order triads first, then rerun simulation."
+            }
+          />
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <HorizontalBarList
+            title="Triad quality by driver"
+            subtitle="Checks completeness + min ≤ ML ≤ max (+ probability bounds when applicable)."
+            items={triadQualityRows.map((r) => ({ key: r.label, label: r.label, value: r.qualityPct }))}
+            valueFormatter={(v) => `${Math.round(v)}%`}
+            tone="rgba(128,46,255,0.9)"
+          />
+        </div>
+      </Card>
 
       {/* Actions */}
       <Card>

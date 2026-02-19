@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { uid } from "../../lib/model";
+import { DecisionNarrative, HorizontalBarList, ScoreGauge, StackedShareBar } from "./DecisionViz";
 
 // -------------------- UI helpers (declared outside to avoid focus loss) --------------------
 
@@ -343,6 +344,33 @@ export default function TreatmentsView({ vendor, scenario, updateVendor, appMode
     return opEffectivenessFromRatings(active.intended, active.coverage, active.reliability);
   }, [active]);
 
+  const controlMix = useMemo(() => {
+    const status = { Implemented: 0, Planned: 0, Proposed: 0, Rejected: 0 };
+    const fn = { LEC: 0, VMC: 0, DSC: 0 };
+    const opMls = [];
+    let whatIfIncluded = 0;
+
+    for (const c of localControls) {
+      status[c.status] = (status[c.status] || 0) + 1;
+      fn[c.function] = (fn[c.function] || 0) + 1;
+      const op = opEffectivenessFromRatings(c.intended, c.coverage, c.reliability);
+      if (Number.isFinite(op.ml)) opMls.push(op.ml);
+      if (c.status !== "Implemented" && c.status !== "Rejected" && c.includeInWhatIf) whatIfIncluded += 1;
+    }
+
+    const avgOp = opMls.length ? opMls.reduce((a, b) => a + b, 0) / opMls.length : 0;
+    const ranked = [...localControls]
+      .map((c) => ({
+        key: c.id,
+        label: c.name?.trim() ? c.name : "(Untitled control)",
+        value: opEffectivenessFromRatings(c.intended, c.coverage, c.reliability).ml * 100,
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 6);
+
+    return { status, fn, avgOp, ranked, whatIfIncluded };
+  }, [localControls]);
+
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <Card>
@@ -377,6 +405,60 @@ export default function TreatmentsView({ vendor, scenario, updateVendor, appMode
               <div style={{ fontSize: 12, opacity: 0.75 }}>Unsaved changes</div>
             ) : null}
           </div>
+        </div>
+      </Card>
+
+      <Card>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
+          <ScoreGauge
+            title="Control program strength"
+            subtitle="Average operational effectiveness across all controls."
+            score={controlMix.avgOp * 100}
+            max={100}
+          />
+          <DecisionNarrative
+            tone={controlMix.avgOp >= 0.7 ? "good" : controlMix.avgOp >= 0.45 ? "warn" : "bad"}
+            title="Treatment decision insight"
+            message={
+              controlMix.avgOp >= 0.7
+                ? `Control design is relatively strong. Focus decision on implementation evidence and governance cadence (${controlMix.whatIfIncluded} planned/proposed included in what-if).`
+                : controlMix.avgOp >= 0.45
+                ? `Control set is moderate. Prioritize high-leverage controls before approving risk acceptance (${controlMix.whatIfIncluded} planned/proposed included in what-if).`
+                : `Control reliability is currently weak. Decision should remain conditional until stronger controls are designed and tested (${controlMix.whatIfIncluded} planned/proposed included in what-if).`
+            }
+          />
+        </div>
+
+        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <StackedShareBar
+            title="Status mix"
+            subtitle="Execution maturity of the treatment plan."
+            segments={[
+              { key: "impl", label: "Implemented", value: controlMix.status.Implemented, color: "rgba(34,197,94,0.9)" },
+              { key: "planned", label: "Planned", value: controlMix.status.Planned, color: "rgba(59,130,246,0.9)" },
+              { key: "proposed", label: "Proposed", value: controlMix.status.Proposed, color: "rgba(245,158,11,0.9)" },
+              { key: "rejected", label: "Rejected", value: controlMix.status.Rejected, color: "rgba(239,68,68,0.9)" },
+            ]}
+          />
+          <StackedShareBar
+            title="FAIR-CAM function mix"
+            subtitle="Coverage across direct, variance, and decision controls."
+            segments={[
+              { key: "lec", label: "LEC", value: controlMix.fn.LEC, color: "rgba(236,120,51,0.9)" },
+              { key: "vmc", label: "VMC", value: controlMix.fn.VMC, color: "rgba(128,46,255,0.9)" },
+              { key: "dsc", label: "DSC", value: controlMix.fn.DSC, color: "rgba(59,130,246,0.9)" },
+            ]}
+          />
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <HorizontalBarList
+            title="Top controls by expected effectiveness"
+            subtitle="Higher values indicate stronger potential decision leverage."
+            items={controlMix.ranked}
+            valueFormatter={(v) => `${Math.round(v)}%`}
+            tone="rgba(236,120,51,0.9)"
+          />
         </div>
       </Card>
 

@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState, useEffect } from "react";
 import { ensureQuant, runFairMonteCarlo } from "../../lib/fairEngine";
+import { DecisionNarrative, HorizontalBarList, ScoreGauge } from "./DecisionViz";
 
 /**
  * ResultsView — FAIR only
@@ -322,6 +323,7 @@ const toNum = (x) => {
   const n = Number(String(x).replace(",", "."));
   return Number.isFinite(n) ? n : null;
 };
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
 function checkTriad01(label, triad) {
   const out = [];
@@ -385,6 +387,8 @@ export default function ResultsView({ vendor, scenario, updateVendor, setActiveV
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9));
 
   const hasResults = !!q?.stats?.ale && Array.isArray(q?.aleSamples) && q.aleSamples.length > 0;
+  const aleP50 = Number(q?.stats?.ale?.ml);
+  const aleP90 = Number(q?.stats?.ale?.p90);
 
   // LEF interpretation (ML)
   const lefML = toNum(q?.lef?.ml);
@@ -392,6 +396,13 @@ export default function ResultsView({ vendor, scenario, updateVendor, setActiveV
     const h = lefToHuman(lefML);
     return h?.cadenceLabel || "";
   }, [lefML]);
+  const decisionPressure = useMemo(() => {
+    if (!Number.isFinite(aleP50) || !Number.isFinite(aleP90) || !Number.isFinite(lefML)) return null;
+    const tailRatio = aleP90 / Math.max(1, aleP50);
+    const annualEventProb = 1 - Math.exp(-Math.max(0, lefML));
+    const score = clamp(annualEventProb * 55 + clamp((tailRatio - 1) * 35, 0, 45), 0, 100);
+    return { score, tailRatio, annualEventProb };
+  }, [aleP50, aleP90, lefML]);
 
   // --- Input sanity checks (probabilities must be 0..1)
   const inputWarnings = useMemo(() => {
@@ -584,6 +595,40 @@ export default function ResultsView({ vendor, scenario, updateVendor, setActiveV
               </div>
             </Card>
           </div>
+
+          <Card>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
+              <ScoreGauge
+                title="Decision pressure index"
+                subtitle="Combines annual event chance and ALE tail severity."
+                score={decisionPressure?.score || 0}
+                max={100}
+              />
+              <DecisionNarrative
+                tone={decisionPressure?.score >= 70 ? "bad" : decisionPressure?.score >= 45 ? "warn" : "good"}
+                title="What this means for decision-makers"
+                message={
+                  decisionPressure
+                    ? `Annual event probability is ${(decisionPressure.annualEventProb * 100).toFixed(1)}% with an ALE tail ratio (p90/p50) of ${decisionPressure.tailRatio.toFixed(2)}. Use this to decide whether acceptance is possible or if stronger controls/conditions are required.`
+                    : "Complete LEF and run simulation to derive a decision pressure index."
+                }
+              />
+            </div>
+
+            <div style={{ marginTop: 10 }}>
+              <HorizontalBarList
+                title="ALE quantile profile"
+                subtitle="Compare typical and stress-year loss levels."
+                items={[
+                  { key: "p10", label: "ALE p10", value: Number(q?.stats?.ale?.p10) },
+                  { key: "p50", label: "ALE p50", value: Number(q?.stats?.ale?.ml) },
+                  { key: "p90", label: "ALE p90", value: Number(q?.stats?.ale?.p90) },
+                ]}
+                valueFormatter={(v) => money(v)}
+                tone="rgba(236,120,51,0.9)"
+              />
+            </div>
+          </Card>
 
           {/* Charts: ALE histogram + ALE exceedance */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>

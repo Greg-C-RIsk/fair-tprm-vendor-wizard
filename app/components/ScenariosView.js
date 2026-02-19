@@ -2,6 +2,37 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { emptyScenario, uid } from "../../lib/model";
+import { DecisionNarrative, ScoreGauge, StackedShareBar } from "./DecisionViz";
+
+function scenarioCompleteness(s) {
+  const checks = [
+    !!s?.title?.trim(),
+    !!s?.assetAtRisk?.trim(),
+    !!s?.threatActor?.trim(),
+    !!s?.attackVector?.trim(),
+    !!s?.lossEvent?.trim(),
+    !!s?.narrative?.trim(),
+    !!s?.assumptions?.trim(),
+  ];
+
+  const q = s?.quant || {};
+  const hasQuantInputs =
+    !!q?.level &&
+    (q?.lef?.ml || q?.tef?.ml || q?.contactFrequency?.ml || q?.primaryLoss?.ml || q?.secondaryLossMagnitude?.ml);
+  const hasQuantOutputs = Number.isFinite(q?.stats?.ale?.p90) || (Array.isArray(q?.aleSamples) && q.aleSamples.length >= 20);
+
+  checks.push(!!hasQuantInputs);
+  checks.push(!!hasQuantOutputs);
+
+  const total = checks.length;
+  const score = checks.filter(Boolean).length;
+
+  let status = "Draft";
+  if (hasQuantOutputs) status = "Ready";
+  else if (hasQuantInputs) status = "Missing results";
+
+  return { score, total, status, hasQuantInputs, hasQuantOutputs };
+}
 
 function Field({ label, value, onChange, placeholder, textarea }) {
   return (
@@ -93,6 +124,18 @@ export default function ScenariosView({
   const activeScenario = useMemo(() => {
     return localScenarios.find((s) => s.id === activeScenarioId) || null;
   }, [localScenarios, activeScenarioId]);
+  const portfolioState = useMemo(() => {
+    const out = { ready: 0, missingResults: 0, draft: 0 };
+    for (const sc of localScenarios) {
+      const c = scenarioCompleteness(sc);
+      if (c.status === "Ready") out.ready += 1;
+      else if (c.status === "Missing results") out.missingResults += 1;
+      else out.draft += 1;
+    }
+    return out;
+  }, [localScenarios]);
+
+  const activeCompleteness = useMemo(() => scenarioCompleteness(activeScenario), [activeScenario]);
 
   if (!vendor) {
     return (
@@ -194,6 +237,18 @@ export default function ScenariosView({
           </button>
         </div>
 
+        <div style={{ marginTop: 12 }}>
+          <StackedShareBar
+            title="Scenario readiness"
+            subtitle="Portfolio quality before quantification and decisions."
+            segments={[
+              { key: "ready", label: "Ready", value: portfolioState.ready, color: "rgba(34,197,94,0.9)" },
+              { key: "missing", label: "Missing results", value: portfolioState.missingResults, color: "rgba(245,158,11,0.9)" },
+              { key: "draft", label: "Draft", value: portfolioState.draft, color: "rgba(156,163,175,0.9)" },
+            ]}
+          />
+        </div>
+
         <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
           {localScenarios.map((s) => {
             const active = s.id === activeScenarioId;
@@ -267,7 +322,27 @@ export default function ScenariosView({
   <button className="btn" onClick={() => deleteScenario(activeScenario.id)}>
     Delete
   </button>
-</div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <ScoreGauge
+                title="Scenario completeness"
+                subtitle="Narrative + quant inputs + quant outputs."
+                score={activeCompleteness.score}
+                max={activeCompleteness.total}
+              />
+              <DecisionNarrative
+                tone={activeCompleteness.status === "Ready" ? "good" : activeCompleteness.status === "Missing results" ? "warn" : "info"}
+                title="Decision readiness"
+                message={
+                  activeCompleteness.status === "Ready"
+                    ? "This scenario is quantified and can be compared in Results, Treatments and Decisions."
+                    : activeCompleteness.status === "Missing results"
+                    ? "Inputs exist but no simulation output is available. Run Quantify/Results to support decisions with distributions."
+                    : "Document the scenario narrative first, then quantify to produce decision-grade risk outputs."
+                }
+              />
             </div>
 
             <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

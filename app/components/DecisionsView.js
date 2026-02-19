@@ -8,6 +8,7 @@ import {
   getBaselineControls,
   getWhatIfControls,
 } from "../../lib/fairCamEngine";
+import { BaselineResidualCompare, DecisionNarrative, ScoreGauge } from "./DecisionViz";
 
 function moneyEUR(n) {
   if (!Number.isFinite(n)) return "—";
@@ -166,6 +167,12 @@ export default function DecisionsView({ vendor, scenario, updateVendor, appMode 
     if (!Number.isFinite(b) || !Number.isFinite(r) || b === 0) return null;
     return ((r - b) / b) * 100;
   }, [baseline, residual]);
+  const deltaP50 = useMemo(() => {
+    const b = baseline?.ale?.ml;
+    const r = residual?.ale?.ml;
+    if (!Number.isFinite(b) || !Number.isFinite(r) || b === 0) return null;
+    return ((r - b) / b) * 100;
+  }, [baseline, residual]);
 
   const recommendation = useMemo(() => {
     if (!Number.isFinite(deltaP90)) return "Run baseline vs residual to derive a decision recommendation.";
@@ -291,6 +298,15 @@ export default function DecisionsView({ vendor, scenario, updateVendor, appMode 
               </span>
             ) : null}
           </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <ScoreGauge
+            title="Decision record completion"
+            subtitle="Required fields filled for audit-grade traceability."
+            score={completion}
+            max={100}
+          />
         </div>
       </Card>
 
@@ -441,6 +457,40 @@ export default function DecisionsView({ vendor, scenario, updateVendor, appMode 
               Status: <strong>{runMessage}</strong>
             </div>
           ) : null}
+
+          {baseline && residual ? (
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <BaselineResidualCompare
+                  title="ALE p50 comparison"
+                  baselineValue={baseline.ale?.ml}
+                  residualValue={residual.ale?.ml}
+                />
+                <BaselineResidualCompare
+                  title="ALE p90 comparison"
+                  baselineValue={baseline.ale?.p90}
+                  residualValue={residual.ale?.p90}
+                />
+              </div>
+              <DecisionNarrative
+                tone={deltaP90 !== null && deltaP90 <= -15 ? "good" : deltaP90 !== null && deltaP90 < 5 ? "warn" : "bad"}
+                title="Decision implication"
+                message={
+                  deltaP90 !== null
+                    ? `Residual vs baseline: p50 ${pctDelta(deltaP50)} and p90 ${pctDelta(deltaP90)}. ${recommendation}`
+                    : recommendation
+                }
+              />
+            </div>
+          ) : (
+            <div style={{ marginTop: 12 }}>
+              <DecisionNarrative
+                tone="info"
+                title="Decision implication"
+                message="Run baseline vs residual first to quantify the expected impact of planned/proposed controls before final approval."
+              />
+            </div>
+          )}
 
           {baseline && residual ? (
             <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
