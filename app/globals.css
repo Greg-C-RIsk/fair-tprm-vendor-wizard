@@ -755,8 +755,12 @@ body::after {
   gap: 0;
   border-radius: 26px;
   overflow: hidden;
-  border: 1px solid #ece8f4;
-  background: #f3f1f9;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  background:
+    linear-gradient(140deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.16)),
+    rgba(236, 233, 245, 0.58);
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
   box-shadow:
     0 24px 52px rgba(34, 30, 56, 0.18),
     0 4px 10px rgba(34, 30, 56, 0.06);
@@ -767,7 +771,7 @@ body::after {
   border-right: 1px solid var(--line);
   border-radius: 0;
   box-shadow: none;
-  background: transparent;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.06));
   padding: 18px 14px;
   display: flex;
   flex-direction: column;
@@ -775,7 +779,7 @@ body::after {
 }
 
 .saas-main {
-  background: transparent;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
   padding: 16px;
   display: grid;
   grid-template-rows: auto auto auto auto 1fr;
@@ -847,7 +851,7 @@ body::after {
 .mode-chip.active,
 .view-chip.active {
   color: #fff;
-  border-color: rgba(var(--brand-1-rgb), 0.56);
+  border-color: rgba(var(--brand-2-rgb), 0.2);
   background: var(--brand-2);
   box-shadow: 0 6px 14px rgba(var(--brand-2-rgb), 0.24);
 }
@@ -896,8 +900,10 @@ body::after {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 16px;
-  background: #ffffff;
-  box-shadow: none;
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: 0 10px 22px rgba(20, 18, 36, 0.07);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
 }
 
 .saas-kpi-grid {
@@ -960,8 +966,10 @@ body::after {
   padding: 11px;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: #ffffff;
-  box-shadow: none;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 8px 20px rgba(20, 18, 36, 0.06);
+  backdrop-filter: blur(12px) saturate(118%);
+  -webkit-backdrop-filter: blur(12px) saturate(118%);
 }
 
 .saas-context-grid {
@@ -978,10 +986,10 @@ body::after {
 .card {
   border: 1px solid var(--line);
   border-radius: 16px;
-  background: #ffffff;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  background: rgba(255, 255, 255, 0.64);
+  box-shadow: 0 12px 24px rgba(20, 18, 36, 0.07);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
 }
 
 .card:hover {
@@ -991,7 +999,7 @@ body::after {
 .chip-pill {
   border: 1px solid #ded8ee;
   border-radius: 999px;
-  background: #f5f3fb;
+  background: rgba(245, 243, 251, 0.72);
   color: #4a4366;
   box-shadow: none;
 }
@@ -1001,9 +1009,9 @@ body::after {
 .textarea {
   border: 1px solid #ddd7ed;
   border-radius: 11px;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.82);
   color: #27243a;
-  box-shadow: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 
 .input::placeholder,
@@ -1037,7 +1045,7 @@ select.input {
 .btn {
   border-radius: 11px;
   border: 1px solid #d8d1ea;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.82);
   color: #35314a;
   box-shadow: none;
   font-weight: 600;
@@ -1051,8 +1059,12 @@ select.input {
 
 .btn.primary {
   color: #fff;
-  border-color: rgba(var(--brand-1-rgb), 0.56);
+  border-color: transparent;
   background: var(--brand-2);
+}
+
+.btn.primary:hover {
+  border-color: transparent;
 }
 
 .btn.ghost {
