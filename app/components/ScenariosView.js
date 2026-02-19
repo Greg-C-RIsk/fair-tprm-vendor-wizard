@@ -27,7 +27,14 @@ function Field({ label, value, onChange, placeholder, textarea }) {
   );
 }
 
-export default function ScenariosView({ vendor, updateVendor, setActiveView, selectScenario, appMode = "tprm" }) {
+export default function ScenariosView({
+  vendor,
+  updateVendor,
+  setActiveView,
+  selectScenario,
+  selectedScenarioId = "",
+  appMode = "tprm",
+}) {
   const entityLabel = appMode === "enterprise" ? "asset" : "vendor";
   const vendorScenarios = useMemo(() => {
     return Array.isArray(vendor?.scenarios) ? vendor.scenarios : [];
@@ -74,6 +81,14 @@ export default function ScenariosView({ vendor, updateVendor, setActiveView, sel
       setActiveScenarioId(localScenarios[0].id);
     }
   }, [localScenarios, activeScenarioId]);
+
+  // Keep local selection synced when global context scenario changes from page context menu.
+  useEffect(() => {
+    if (!selectedScenarioId || !Array.isArray(localScenarios) || localScenarios.length === 0) return;
+    if (!localScenarios.some((s) => s.id === selectedScenarioId)) return;
+    if (activeScenarioId === selectedScenarioId) return;
+    setActiveScenarioId(selectedScenarioId);
+  }, [selectedScenarioId, localScenarios, activeScenarioId]);
 
   const activeScenario = useMemo(() => {
     return localScenarios.find((s) => s.id === activeScenarioId) || null;

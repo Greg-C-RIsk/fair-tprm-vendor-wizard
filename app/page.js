@@ -217,10 +217,76 @@ function makePrimaryTestDataset() {
   ];
 
   const levelCycle = ["LEF", "TEF", "Contact Frequency"];
-  const scenarioTitles = [
-    "Privileged account compromise in IAM",
-    "Ransomware disruption of core operations",
-    "Data leakage through misconfigured API gateway",
+  const scenarioCatalogByAsset = [
+    [
+      {
+        title: "Privileged account takeover in IAM",
+        assetAtRisk: "Directory admin roles and privileged identity workflows",
+        threatActor: "External cybercriminal",
+        attackVector: "Session hijack and privilege escalation",
+        lossEvent: "Unauthorized privileged operations and broad lateral access",
+      },
+      {
+        title: "Identity outage from directory ransomware",
+        assetAtRisk: "Authentication and SSO availability",
+        threatActor: "External cybercriminal",
+        attackVector: "Malware delivery and domain controller encryption",
+        lossEvent: "Authentication disruption and business interruption",
+      },
+      {
+        title: "Credential data leakage via IAM API misconfiguration",
+        assetAtRisk: "Identity attributes and token metadata",
+        threatActor: "External attacker",
+        attackVector: "Over-permissioned IAM API and key abuse",
+        lossEvent: "Confidential identity data exposure",
+      },
+    ],
+    [
+      {
+        title: "ERP finance privilege abuse",
+        assetAtRisk: "General ledger integrity and payment workflows",
+        threatActor: "Malicious insider",
+        attackVector: "Abused elevated role and weak segregation of duties",
+        lossEvent: "Fraudulent transactions and reporting errors",
+      },
+      {
+        title: "Ransomware disruption of month-end close",
+        assetAtRisk: "ERP availability during close and settlement",
+        threatActor: "External cybercriminal",
+        attackVector: "Compromised admin endpoint and lateral spread",
+        lossEvent: "Delayed close, operational outage, and recovery cost",
+      },
+      {
+        title: "Sensitive finance export exfiltration",
+        assetAtRisk: "Payroll and vendor payment exports",
+        threatActor: "External attacker / opportunistic actor",
+        attackVector: "Compromised service account and bulk export",
+        lossEvent: "Data disclosure and regulatory exposure",
+      },
+    ],
+    [
+      {
+        title: "Customer account takeover wave",
+        assetAtRisk: "Consumer accounts and self-service transactions",
+        threatActor: "External cybercriminal",
+        attackVector: "Credential stuffing and bot automation",
+        lossEvent: "Unauthorized customer actions and support overload",
+      },
+      {
+        title: "Digital channel outage during peak traffic",
+        assetAtRisk: "Web/mobile channel availability",
+        threatActor: "External attacker",
+        attackVector: "Traffic flood and upstream dependency exhaustion",
+        lossEvent: "Revenue loss and customer churn risk",
+      },
+      {
+        title: "PII exposure through API gateway policy gap",
+        assetAtRisk: "Customer profile and session data",
+        threatActor: "External attacker",
+        attackVector: "Broken authorization in public-facing API",
+        lossEvent: "Large-scale customer data exposure",
+      },
+    ],
   ];
 
   const vendors = primaryContexts.map((seed, vIdx) => {
@@ -237,11 +303,12 @@ function makePrimaryTestDataset() {
       const pelSamples = makeSamples(pelP50, 420, 0.25, vIdx * 19 + sIdx * 9);
 
       const s = { ...emptyScenario(), id: uid() };
-      s.title = `${scenarioTitles[sIdx]} (${seed.name.split(" ")[0]})`;
-      s.assetAtRisk = sIdx === 0 ? "Privileged identity plane" : sIdx === 1 ? "Core business continuity" : "Customer data and trust";
-      s.threatActor = sIdx === 2 ? "External attacker / opportunistic actor" : "External cybercriminal";
-      s.attackVector = sIdx === 0 ? "Session hijack + privilege escalation" : sIdx === 1 ? "Malware delivery + lateral movement" : "API key abuse / over-permissioned services";
-      s.lossEvent = sIdx === 1 ? "Operational shutdown and delayed recovery" : "Unauthorized access and confidentiality breach";
+      const tpl = scenarioCatalogByAsset[vIdx][sIdx];
+      s.title = tpl.title;
+      s.assetAtRisk = tpl.assetAtRisk;
+      s.threatActor = tpl.threatActor;
+      s.attackVector = tpl.attackVector;
+      s.lossEvent = tpl.lossEvent;
       s.narrative = "Primary-risk synthetic scenario for training and demo.";
       s.assumptions = "Synthetic values, generated for local testing.";
       s.quant = {
@@ -1173,6 +1240,8 @@ export default function Page() {
 
   const activeEntities = appMode === "enterprise" ? assets : vendors;
   const showContextBar = !vendorForm.open && !["Vendors", "Assets"].includes(activeView);
+  const scenarioOnlyViews = ["Quantify", "Results", "Treatments"];
+  const lockEntityInContext = scenarioOnlyViews.includes(activeView);
 
   // Guards (évite crash si scenario null)
   const needsVendor = !["Vendors", "Assets"].includes(activeView);
@@ -1275,18 +1344,37 @@ export default function Page() {
                     <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>
                       {appMode === "enterprise" ? "Asset" : "Vendor"}
                     </div>
-                    <select
-                      className="input"
-                      value={selectedContext?.id || ""}
-                      onChange={(e) => selectVendor(e.target.value)}
-                      disabled={!activeEntities.length}
-                    >
-                      {activeEntities.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.name?.trim() ? v.name : "(Unnamed vendor)"}
-                        </option>
-                      ))}
-                    </select>
+                    {lockEntityInContext ? (
+                      <div
+                        style={{
+                          border: "1px solid rgba(255,255,255,0.14)",
+                          borderRadius: 10,
+                          padding: "10px 12px",
+                          background: "rgba(255,255,255,0.04)",
+                          fontSize: 13,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {selectedContext?.name?.trim()
+                          ? selectedContext.name
+                          : appMode === "enterprise"
+                          ? "(No asset selected)"
+                          : "(No vendor selected)"}
+                      </div>
+                    ) : (
+                      <select
+                        className="input"
+                        value={selectedContext?.id || ""}
+                        onChange={(e) => selectVendor(e.target.value)}
+                        disabled={!activeEntities.length}
+                      >
+                        {activeEntities.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.name?.trim() ? v.name : "(Unnamed vendor)"}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
 
                   <div style={{ minWidth: 320 }}>
@@ -1406,6 +1494,7 @@ export default function Page() {
     updateVendor={updateVendor}
     setActiveView={setActiveView}
     selectScenario={selectScenario}
+    selectedScenarioId={selectedScenario?.id || ""}
     appMode={appMode}
   />
 ) : activeView === "Quantify" ? (
