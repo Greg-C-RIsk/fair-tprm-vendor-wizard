@@ -36,7 +36,7 @@ function makeSamples(mid, count = 240, spread = 0.28, phase = 0) {
   return out;
 }
 
-function makeTestDataset() {
+function makeTPRMTestDataset() {
   const vendorSeeds = [
     {
       name: "Northbridge CRM Cloud",
@@ -174,6 +174,150 @@ function makeTestDataset() {
     selectedVendorId: vendors[0]?.id || "",
     selectedScenarioId: vendors[0]?.scenarios?.[0]?.id || "",
   };
+}
+
+function makePrimaryTestDataset() {
+  const primaryContexts = [
+    {
+      name: "Enterprise Identity Core",
+      category: "Internal",
+      businessOwner: "CISO Office",
+      geography: "Global",
+      criticalFunction: "Identity and access management",
+      dataTypes: "Employee identities, auth logs, privileged entitlements",
+      dependencyLevel: "High",
+      carryForward: true,
+      tiering: { dataSensitivity: 4, integrationDepth: 5, accessPrivileges: 5, historicalIncidents: 2, businessCriticality: 5 },
+      tier: "Tier 1",
+    },
+    {
+      name: "Finance ERP Platform",
+      category: "Internal",
+      businessOwner: "Finance Director",
+      geography: "EU",
+      criticalFunction: "Financial operations and reporting",
+      dataTypes: "Invoices, accounting entries, payroll metadata",
+      dependencyLevel: "High",
+      carryForward: true,
+      tiering: { dataSensitivity: 4, integrationDepth: 4, accessPrivileges: 4, historicalIncidents: 2, businessCriticality: 5 },
+      tier: "Tier 1",
+    },
+    {
+      name: "Customer Digital Channels",
+      category: "Internal",
+      businessOwner: "Head of Digital",
+      geography: "Global",
+      criticalFunction: "Customer acquisition and account servicing",
+      dataTypes: "Customer accounts, session tokens, service events",
+      dependencyLevel: "Medium",
+      carryForward: true,
+      tiering: { dataSensitivity: 4, integrationDepth: 4, accessPrivileges: 3, historicalIncidents: 3, businessCriticality: 4 },
+      tier: "Tier 2",
+    },
+  ];
+
+  const levelCycle = ["LEF", "TEF", "Contact Frequency"];
+  const scenarioTitles = [
+    "Privileged account compromise in IAM",
+    "Ransomware disruption of core operations",
+    "Data leakage through misconfigured API gateway",
+  ];
+
+  const vendors = primaryContexts.map((seed, vIdx) => {
+    const v = { ...emptyVendor(), id: uid(), ...seed };
+
+    v.scenarios = Array.from({ length: 3 }).map((_, sIdx) => {
+      const level = levelCycle[sIdx % levelCycle.length];
+      const aleP50 = 120000 + vIdx * 70000 + sIdx * 52000;
+      const aleP90 = aleP50 * (1.65 + sIdx * 0.08);
+      const pelP50 = 30000 + vIdx * 12000 + sIdx * 10500;
+      const pelP90 = pelP50 * 1.75;
+
+      const aleSamples = makeSamples(aleP50, 260, 0.34, vIdx * 21 + sIdx * 13);
+      const pelSamples = makeSamples(pelP50, 420, 0.25, vIdx * 19 + sIdx * 9);
+
+      const s = { ...emptyScenario(), id: uid() };
+      s.title = `${scenarioTitles[sIdx]} (${seed.name.split(" ")[0]})`;
+      s.assetAtRisk = sIdx === 0 ? "Privileged identity plane" : sIdx === 1 ? "Core business continuity" : "Customer data and trust";
+      s.threatActor = sIdx === 2 ? "External attacker / opportunistic actor" : "External cybercriminal";
+      s.attackVector = sIdx === 0 ? "Session hijack + privilege escalation" : sIdx === 1 ? "Malware delivery + lateral movement" : "API key abuse / over-permissioned services";
+      s.lossEvent = sIdx === 1 ? "Operational shutdown and delayed recovery" : "Unauthorized access and confidentiality breach";
+      s.narrative = "Primary-risk synthetic scenario for training and demo.";
+      s.assumptions = "Synthetic values, generated for local testing.";
+      s.quant = {
+        ...s.quant,
+        level,
+        lef: { min: "0.3", ml: String(1 + vIdx * 0.45 + sIdx * 0.25), max: String(2.7 + vIdx * 0.6 + sIdx * 0.45) },
+        tef: { min: "1.4", ml: String(4.8 + vIdx + sIdx), max: String(10.5 + vIdx * 1.1 + sIdx * 1.2) },
+        contactFrequency: { min: "25", ml: String(52 + vIdx * 10 + sIdx * 9), max: String(112 + vIdx * 16 + sIdx * 15) },
+        probabilityOfAction: { min: "0.05", ml: String(0.16 + 0.05 * sIdx), max: String(0.4 + 0.07 * sIdx) },
+        susceptibility: { min: "0.09", ml: String(0.27 + 0.05 * sIdx), max: String(0.56 + 0.05 * sIdx) },
+        threatCapacity: { min: "2", ml: String(4 + sIdx), max: "8" },
+        resistanceStrength: { min: "2", ml: String(3 + vIdx), max: "7" },
+        primaryLoss: { min: String(Math.round(pelP50 * 0.45)), ml: String(Math.round(pelP50 * 0.82)), max: String(Math.round(pelP90 * 0.88)) },
+        secondaryLossEventFrequency: { min: "0.25", ml: String(0.8 + sIdx * 0.2), max: String(1.9 + sIdx * 0.3) },
+        secondaryLossMagnitude: { min: String(Math.round(pelP50 * 0.1)), ml: String(Math.round(pelP50 * 0.35)), max: String(Math.round(pelP50 * 0.82)) },
+        sims: 10000,
+        lastRunAt: new Date().toISOString(),
+        aleSamples,
+        pelSamples,
+        stats: {
+          ale: { min: Math.min(...aleSamples), ml: aleP50, max: Math.max(...aleSamples), p10: aleP50 * 0.57, p90: aleP90 },
+          pel: { min: Math.min(...pelSamples), ml: pelP50, max: Math.max(...pelSamples), p10: pelP50 * 0.66, p90: pelP90 },
+        },
+      };
+
+      s.controls = [
+        {
+          id: uid(),
+          name: "Privileged access hardening",
+          function: "LEC",
+          type: "Resistance",
+          status: "Implemented",
+          includeInWhatIf: true,
+          intended: "High",
+          coverage: "Moderate",
+          reliability: "High",
+        },
+        {
+          id: uid(),
+          name: "Detection engineering uplift",
+          function: "LEC",
+          type: "Detection",
+          status: "Planned",
+          includeInWhatIf: true,
+          intended: "Moderate",
+          coverage: "High",
+          reliability: "Moderate",
+        },
+        {
+          id: uid(),
+          name: "Resilience and recovery rehearsal",
+          function: "LEC",
+          type: "Resilience",
+          status: "Proposed",
+          includeInWhatIf: true,
+          intended: "Moderate",
+          coverage: "Moderate",
+          reliability: "Moderate",
+        },
+      ];
+
+      return s;
+    });
+
+    return v;
+  });
+
+  return {
+    vendors,
+    selectedVendorId: vendors[0]?.id || "",
+    selectedScenarioId: vendors[0]?.scenarios?.[0]?.id || "",
+  };
+}
+
+function makeTestDataset(mode = "tprm") {
+  return mode === "primary" ? makePrimaryTestDataset() : makeTPRMTestDataset();
 }
 
 // ---------------------------
@@ -817,11 +961,12 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
 
   const loadTestData = () => {
     if (typeof window !== "undefined") {
-      const ok = window.confirm("Load synthetic test dataset (3 vendors x 3 scenarios) and replace current local data?");
+      const label = appMode === "primary" ? "Primary Risk" : "TPRM";
+      const ok = window.confirm(`Load synthetic ${label} test dataset (3 contexts x 3 scenarios) and replace current local data?`);
       if (!ok) return;
     }
 
-    const ds = makeTestDataset();
+    const ds = makeTestDataset(appMode);
     setState(normalizeState(ds));
     setActiveView("Dashboard");
     closeVendorForm();
