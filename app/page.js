@@ -1240,8 +1240,6 @@ export default function Page() {
 
   const activeEntities = appMode === "enterprise" ? assets : vendors;
   const showContextBar = !vendorForm.open && !["Vendors", "Assets"].includes(activeView);
-  const scenarioOnlyViews = ["Quantify", "Results", "Treatments"];
-  const lockEntityInContext = scenarioOnlyViews.includes(activeView);
 
   // Guards (évite crash si scenario null)
   const needsVendor = !["Vendors", "Assets"].includes(activeView);
@@ -1344,37 +1342,18 @@ export default function Page() {
                     <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>
                       {appMode === "enterprise" ? "Asset" : "Vendor"}
                     </div>
-                    {lockEntityInContext ? (
-                      <div
-                        style={{
-                          border: "1px solid rgba(255,255,255,0.14)",
-                          borderRadius: 10,
-                          padding: "10px 12px",
-                          background: "rgba(255,255,255,0.04)",
-                          fontSize: 13,
-                          fontWeight: 700,
-                        }}
-                      >
-                        {selectedContext?.name?.trim()
-                          ? selectedContext.name
-                          : appMode === "enterprise"
-                          ? "(No asset selected)"
-                          : "(No vendor selected)"}
-                      </div>
-                    ) : (
-                      <select
-                        className="input"
-                        value={selectedContext?.id || ""}
-                        onChange={(e) => selectVendor(e.target.value)}
-                        disabled={!activeEntities.length}
-                      >
-                        {activeEntities.map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.name?.trim() ? v.name : "(Unnamed vendor)"}
-                          </option>
-                        ))}
-                      </select>
-                    )}
+                    <select
+                      className="input"
+                      value={selectedContext?.id || ""}
+                      onChange={(e) => selectVendor(e.target.value)}
+                      disabled={!activeEntities.length}
+                    >
+                      {activeEntities.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name?.trim() ? v.name : "(Unnamed vendor)"}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div style={{ minWidth: 320 }}>
