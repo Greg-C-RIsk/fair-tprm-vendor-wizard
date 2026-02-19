@@ -184,7 +184,7 @@ function normalizeControls(scenario) {
   }));
 }
 
-function extractScenarioRows(vendors) {
+function extractScenarioRows(vendors, origin = "tprm") {
   const rows = [];
 
   for (const v of Array.isArray(vendors) ? vendors : []) {
@@ -219,8 +219,10 @@ function extractScenarioRows(vendors) {
       else if (Number.isFinite(freqValue) && Number.isFinite(magnitudeValue)) criticality = freqValue * magnitudeValue;
 
       rows.push({
+        origin,
+        entityKind: origin === "enterprise" ? "Asset" : "Vendor",
         vendorId: v?.id,
-        vendorName: v?.name?.trim() ? v.name : "(Unnamed vendor)",
+        vendorName: v?.name?.trim() ? v.name : origin === "enterprise" ? "(Unnamed asset)" : "(Unnamed vendor)",
         scenarioId: s?.id,
         scenarioTitle: s?.title?.trim() ? s.title : "(Untitled scenario)",
         status: scenarioStatus(q),
@@ -277,6 +279,7 @@ function Tooltip({ hover }) {
         minWidth: 220,
       }}
     >
+      <div style={{ fontSize: 11, opacity: 0.78, fontWeight: 800 }}>{row.entityKind}</div>
       <div style={{ fontWeight: 900, fontSize: 12 }}>{row.vendorName}</div>
       <div style={{ fontSize: 12, opacity: 0.92 }}>{row.scenarioTitle}</div>
       <div style={{ marginTop: 6, fontSize: 12, opacity: 0.86 }}>Frequency: {row.freqLabel}</div>
@@ -369,7 +372,7 @@ function ScatterPlot({ rows, selectedKey, onSelect, onHover, floatT }) {
       {plottable.map((row, i) => {
         const baseX = mapX(Math.max(0, row.freqValue));
         const baseY = mapY(Math.max(0, row.magnitudeValue));
-        const key = `${row.vendorId}::${row.scenarioId}`;
+        const key = `${row.origin}::${row.vendorId}::${row.scenarioId}`;
         const isSelected = key === selectedKey;
 
         const jitterX = Math.sin(floatT * 0.9 + i * 0.45) * 1.4;
@@ -542,13 +545,17 @@ function ScenarioDetails({
 
 export default function DashboardView({
   vendors,
+  assets = [],
   setActiveView,
   selectVendor,
   selectScenario,
   updateVendor,
+  updateByOrigin,
   appMode = "tprm",
   focusedVendorId = "",
+  onSelectContext,
 }) {
+  const [scope, setScope] = useState(appMode === "enterprise" ? "enterprise" : "tprm"); // "tprm" | "enterprise" | "global"
   const [query, setQuery] = useState("");
   const [vendorFilter, setVendorFilter] = useState("all");
   const [levelFilter, setLevelFilter] = useState("all");
@@ -570,7 +577,18 @@ export default function DashboardView({
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const rows = useMemo(() => extractScenarioRows(vendors), [vendors]);
+  useEffect(() => {
+    if (appMode === "enterprise") setScope((s) => (s === "global" ? s : "enterprise"));
+    else setScope((s) => (s === "global" ? s : "tprm"));
+  }, [appMode]);
+
+  const rows = useMemo(() => {
+    const tp = extractScenarioRows(vendors, "tprm");
+    const en = extractScenarioRows(assets, "enterprise");
+    if (scope === "tprm") return tp;
+    if (scope === "enterprise") return en;
+    return [...tp, ...en];
+  }, [vendors, assets, scope]);
   const vendorOptions = useMemo(() => {
     const m = new Map();
     for (const r of rows) {
@@ -580,10 +598,16 @@ export default function DashboardView({
   }, [rows]);
 
   useEffect(() => {
-    if (appMode !== "enterprise") return;
+    if (vendorFilter === "all") return;
+    if (vendorOptions.some((v) => v.id === vendorFilter)) return;
+    setVendorFilter("all");
+  }, [vendorFilter, vendorOptions]);
+
+  useEffect(() => {
+    if (scope !== "enterprise") return;
     if (!focusedVendorId) return;
     setVendorFilter(focusedVendorId);
-  }, [appMode, focusedVendorId]);
+  }, [scope, focusedVendorId]);
 
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -610,17 +634,17 @@ export default function DashboardView({
 
   useEffect(() => {
     if (selectedKey) {
-      const stillExists = rows.some((r) => `${r.vendorId}::${r.scenarioId}` === selectedKey);
+      const stillExists = rows.some((r) => `${r.origin}::${r.vendorId}::${r.scenarioId}` === selectedKey);
       if (!stillExists) setSelectedKey("");
       return;
     }
     if (sortedByCriticality.length) {
       const first = sortedByCriticality[0];
-      setSelectedKey(`${first.vendorId}::${first.scenarioId}`);
+      setSelectedKey(`${first.origin}::${first.vendorId}::${first.scenarioId}`);
     }
   }, [rows, selectedKey, sortedByCriticality]);
 
-  const selectedRow = useMemo(() => rows.find((r) => `${r.vendorId}::${r.scenarioId}` === selectedKey) || null, [rows, selectedKey]);
+  const selectedRow = useMemo(() => rows.find((r) => `${r.origin}::${r.vendorId}::${r.scenarioId}` === selectedKey) || null, [rows, selectedKey]);
 
   const selectedScenarioControls = useMemo(() => normalizeControls(selectedRow?.scenarioRef), [selectedRow]);
 
@@ -737,7 +761,7 @@ export default function DashboardView({
   };
 
   const applyDraft = (scenarioId) => {
-    if (!updateVendor || !selectedRow) {
+    if ((!updateVendor && !updateByOrigin) || !selectedRow) {
       setDirtyByScenario((prev) => ({ ...prev, [scenarioId]: false }));
       return;
     }
@@ -785,7 +809,11 @@ export default function DashboardView({
       });
 
     if (!Array.isArray(nextScenarios)) return;
-    updateVendor(selectedRow.vendorId, { scenarios: nextScenarios });
+    if (typeof updateByOrigin === "function") {
+      updateByOrigin(selectedRow.origin, selectedRow.vendorId, { scenarios: nextScenarios });
+    } else {
+      updateVendor(selectedRow.vendorId, { scenarios: nextScenarios });
+    }
     setDirtyByScenario((prev) => ({ ...prev, [scenarioId]: false }));
   };
 
@@ -806,7 +834,7 @@ export default function DashboardView({
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <div>
             <div style={{ fontSize: 22, fontWeight: 950 }}>
-              {appMode === "enterprise" ? "Enterprise Scenario Map" : "Critical Scenario Map"}
+              {scope === "global" ? "Global Scenario Map" : scope === "enterprise" ? "Enterprise Scenario Map" : "TPRM Scenario Map"}
             </div>
             <div style={{ marginTop: 6, opacity: 0.82, fontSize: 13 }}>
               One-screen prioritization across all vendors: frequency vs magnitude, with criticality-encoded points.
@@ -821,8 +849,15 @@ export default function DashboardView({
         </div>
 
         <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <select className="input" style={{ width: 170 }} value={scope} onChange={(e) => setScope(e.target.value)}>
+            <option value="tprm">TPRM view</option>
+            <option value="enterprise">Enterprise view</option>
+            <option value="global">Global view</option>
+          </select>
           <select className="input" style={{ width: 220 }} value={vendorFilter} onChange={(e) => setVendorFilter(e.target.value)}>
-            <option value="all">{appMode === "enterprise" ? "All assets" : "All vendors"}</option>
+            <option value="all">
+              {scope === "enterprise" ? "All assets" : scope === "tprm" ? "All vendors" : "All entities"}
+            </option>
             {vendorOptions.map((v) => (
               <option key={v.id} value={v.id}>
                 {v.name}
@@ -856,9 +891,12 @@ export default function DashboardView({
             selectedKey={selectedKey}
             floatT={floatT}
             onSelect={(row) => {
-              setSelectedKey(`${row.vendorId}::${row.scenarioId}`);
-              selectVendor?.(row.vendorId);
-              selectScenario?.(row.scenarioId);
+              setSelectedKey(`${row.origin}::${row.vendorId}::${row.scenarioId}`);
+              if (typeof onSelectContext === "function") onSelectContext(row.origin, row.vendorId, row.scenarioId);
+              else {
+                selectVendor?.(row.vendorId);
+                selectScenario?.(row.scenarioId);
+              }
             }}
             onHover={(row, x, y) => setHover(row ? { row, x, y } : null)}
           />
@@ -874,7 +912,7 @@ export default function DashboardView({
               <div style={{ fontSize: 13, opacity: 0.75 }}>No plottable scenarios with risk metrics yet.</div>
             ) : (
               topCritical.map((r) => {
-                const key = `${r.vendorId}::${r.scenarioId}`;
+                const key = `${r.origin}::${r.vendorId}::${r.scenarioId}`;
                 const selected = key === selectedKey;
                 return (
                   <button
@@ -882,8 +920,11 @@ export default function DashboardView({
                     className="btn"
                     onClick={() => {
                       setSelectedKey(key);
-                      selectVendor?.(r.vendorId);
-                      selectScenario?.(r.scenarioId);
+                      if (typeof onSelectContext === "function") onSelectContext(r.origin, r.vendorId, r.scenarioId);
+                      else {
+                        selectVendor?.(r.vendorId);
+                        selectScenario?.(r.scenarioId);
+                      }
                     }}
                     style={{
                       textAlign: "left",
@@ -943,14 +984,20 @@ export default function DashboardView({
         }}
         onOpenResults={() => {
           if (!selectedRow) return;
-          selectVendor?.(selectedRow.vendorId);
-          selectScenario?.(selectedRow.scenarioId);
+          if (typeof onSelectContext === "function") onSelectContext(selectedRow.origin, selectedRow.vendorId, selectedRow.scenarioId);
+          else {
+            selectVendor?.(selectedRow.vendorId);
+            selectScenario?.(selectedRow.scenarioId);
+          }
           setActiveView?.("Results");
         }}
         onOpenTreatments={() => {
           if (!selectedRow) return;
-          selectVendor?.(selectedRow.vendorId);
-          selectScenario?.(selectedRow.scenarioId);
+          if (typeof onSelectContext === "function") onSelectContext(selectedRow.origin, selectedRow.vendorId, selectedRow.scenarioId);
+          else {
+            selectVendor?.(selectedRow.vendorId);
+            selectScenario?.(selectedRow.scenarioId);
+          }
           setActiveView?.("Treatments");
         }}
       />

@@ -320,6 +320,31 @@ function makeTestDataset(mode = "tprm") {
   return mode === "enterprise" ? makePrimaryTestDataset() : makeTPRMTestDataset();
 }
 
+function normalizeAppState(maybeState) {
+  const base = maybeState && typeof maybeState === "object" ? maybeState : {};
+
+  const tprm = normalizeState({
+    vendors: Array.isArray(base.vendors) ? base.vendors : [],
+    selectedVendorId: typeof base.selectedVendorId === "string" ? base.selectedVendorId : "",
+    selectedScenarioId: typeof base.selectedScenarioId === "string" ? base.selectedScenarioId : "",
+  });
+
+  const enterprise = normalizeState({
+    vendors: Array.isArray(base.assets) ? base.assets : [],
+    selectedVendorId: typeof base.selectedAssetId === "string" ? base.selectedAssetId : "",
+    selectedScenarioId: typeof base.selectedAssetScenarioId === "string" ? base.selectedAssetScenarioId : "",
+  });
+
+  return {
+    vendors: tprm.vendors,
+    selectedVendorId: tprm.selectedVendorId,
+    selectedScenarioId: tprm.selectedScenarioId,
+    assets: enterprise.vendors,
+    selectedAssetId: enterprise.selectedVendorId,
+    selectedAssetScenarioId: enterprise.selectedScenarioId,
+  };
+}
+
 // ---------------------------
 // Minimal ErrorBoundary (évite la “page blanche”)
 // ---------------------------
@@ -435,7 +460,7 @@ function Divider() {
 // ---------------------------
 // Vendors UX (form + list/details)
 // ---------------------------
-function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
+function VendorForm({ mode, draft, onChange, onCancel, onSubmit, entityLabel = "vendor" }) {
   return (
     <Card>
       <div
@@ -449,7 +474,7 @@ function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
       >
         <div>
           <div style={{ fontSize: 18, fontWeight: 900 }}>
-            {mode === "create" ? "Create a new vendor" : "Edit vendor"}
+            {mode === "create" ? `Create a new ${entityLabel}` : `Edit ${entityLabel}`}
           </div>
           <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
             Fill in the minimum required fields first. You can refine later.
@@ -461,7 +486,7 @@ function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
             Cancel
           </Button>
           <Button onClick={onSubmit} className="btn primary">
-            {mode === "create" ? "Create vendor" : "Save changes"}
+            {mode === "create" ? `Create ${entityLabel}` : "Save changes"}
           </Button>
         </div>
       </div>
@@ -569,7 +594,7 @@ function VendorForm({ mode, draft, onChange, onCancel, onSubmit }) {
         </InputRow>
 
         <div style={{ gridColumn: "1 / -1", marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-          Tip: Create the vendor first, then go to Tiering, Scenarios and Quantify.
+          Tip: {`Create the ${entityLabel} first, then go to Scenarios and Quantify.`}
         </div>
       </div>
     </Card>
@@ -584,7 +609,16 @@ function VendorsView({
   onRequestEdit,
   onDeleteVendor,
   onGoTiering,
+  labels,
 }) {
+  const L = {
+    plural: "Vendors",
+    singular: "vendor",
+    add: "+ Add vendor",
+    emptySelect: "Select a vendor on the left, or click Add vendor.",
+    indexHint: "Go to tiering →",
+    ...(labels || {}),
+  };
   const [q, setQ] = useState("");
 
   const filtered = useMemo(() => {
@@ -606,9 +640,9 @@ function VendorsView({
     <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 14, alignItems: "start" }}>
       <Card>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ fontSize: 16, fontWeight: 900 }}>Vendors</div>
+          <div style={{ fontSize: 16, fontWeight: 900 }}>{L.plural}</div>
           <Button className="btn primary" onClick={onRequestCreate}>
-            + Add vendor
+            {L.add}
           </Button>
         </div>
 
@@ -662,7 +696,7 @@ function VendorsView({
       <Card>
         {!selected ? (
           <div style={{ fontSize: 14, opacity: 0.85 }}>
-            Select a vendor on the left, or click <strong>Add vendor</strong>.
+            {L.emptySelect}
           </div>
         ) : (
           <>
@@ -687,7 +721,7 @@ function VendorsView({
                   Delete
                 </Button>
                 <Button className="btn primary" onClick={onGoTiering}>
-                  Go to tiering →
+                  {L.indexHint}
                 </Button>
               </div>
             </div>
@@ -758,6 +792,9 @@ export default function Page() {
     vendors: [],
     selectedVendorId: "",
     selectedScenarioId: "",
+    assets: [],
+    selectedAssetId: "",
+    selectedAssetScenarioId: "",
   }));
 
   // Hydrate from localStorage (client only)
@@ -765,23 +802,41 @@ export default function Page() {
     try {
       const raw = window.localStorage.getItem(LS_KEY);
       const base = raw
-        ? safeParse(raw, { vendors: [], selectedVendorId: "", selectedScenarioId: "" })
-        : { vendors: [], selectedVendorId: "", selectedScenarioId: "" };
+        ? safeParse(raw, {
+            vendors: [],
+            selectedVendorId: "",
+            selectedScenarioId: "",
+            assets: [],
+            selectedAssetId: "",
+            selectedAssetScenarioId: "",
+          })
+        : {
+            vendors: [],
+            selectedVendorId: "",
+            selectedScenarioId: "",
+            assets: [],
+            selectedAssetId: "",
+            selectedAssetScenarioId: "",
+          };
 
-      const normalized = normalizeState(
-        Array.isArray(base.vendors) && base.vendors.length
-          ? base
-          : { vendors: [emptyVendor()], selectedVendorId: "", selectedScenarioId: "" }
-      );
+      const normalized = normalizeAppState({
+        ...base,
+        vendors: Array.isArray(base.vendors) && base.vendors.length ? base.vendors : [emptyVendor()],
+        assets: Array.isArray(base.assets) && base.assets.length ? base.assets : [emptyVendor()],
+      });
 
       setState(normalized);
     } catch {
       const v = emptyVendor();
+      const a = emptyVendor();
       setState(
-        normalizeState({
+        normalizeAppState({
           vendors: [v],
           selectedVendorId: v.id,
           selectedScenarioId: v.scenarios?.[0]?.id || "",
+          assets: [a],
+          selectedAssetId: a.id,
+          selectedAssetScenarioId: a.scenarios?.[0]?.id || "",
         })
       );
     } finally {
@@ -794,52 +849,77 @@ export default function Page() {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      window.localStorage.setItem(LS_KEY, JSON.stringify(normalizeState(state)));
+      window.localStorage.setItem(LS_KEY, JSON.stringify(normalizeAppState(state)));
     } catch {
       // ignore
     }
   }, [hydrated, state]);
 
   const vendors = Array.isArray(state.vendors) ? state.vendors : [];
+  const assets = Array.isArray(state.assets) ? state.assets : [];
 
   const selectedVendor = useMemo(() => {
     return vendors.find((v) => v.id === state.selectedVendorId) || vendors[0] || null;
   }, [vendors, state.selectedVendorId]);
 
-  const selectedScenario = useMemo(() => {
+  const selectedVendorScenario = useMemo(() => {
     if (!selectedVendor) return null;
     const scenarios = Array.isArray(selectedVendor.scenarios) ? selectedVendor.scenarios : [];
     return scenarios.find((s) => s.id === state.selectedScenarioId) || scenarios[0] || null;
   }, [selectedVendor, state.selectedScenarioId]);
 
-  const updateVendor = (vendorId, patch) => {
+  const selectedAsset = useMemo(() => {
+    return assets.find((a) => a.id === state.selectedAssetId) || assets[0] || null;
+  }, [assets, state.selectedAssetId]);
+
+  const selectedAssetScenario = useMemo(() => {
+    if (!selectedAsset) return null;
+    const scenarios = Array.isArray(selectedAsset.scenarios) ? selectedAsset.scenarios : [];
+    return scenarios.find((s) => s.id === state.selectedAssetScenarioId) || scenarios[0] || null;
+  }, [selectedAsset, state.selectedAssetScenarioId]);
+
+  const selectedContext = appMode === "enterprise" ? selectedAsset : selectedVendor;
+  const selectedScenario = appMode === "enterprise" ? selectedAssetScenario : selectedVendorScenario;
+
+  const updateEntityCollection = (collectionKey, entityId, patch) => {
     setState((p) =>
-      normalizeState({
+      normalizeAppState({
         ...p,
-        vendors: (Array.isArray(p.vendors) ? p.vendors : []).map((v) =>
-          v.id === vendorId ? { ...v, ...patch } : v
+        [collectionKey]: (Array.isArray(p[collectionKey]) ? p[collectionKey] : []).map((v) =>
+          v.id === entityId ? { ...v, ...patch } : v
         ),
       })
     );
   };
 
-const updateManyVendors = (vendorIds, patchOrFn) => {
-  setState((p) =>
-    normalizeState({
-      ...p,
-      vendors: (Array.isArray(p.vendors) ? p.vendors : []).map((v) => {
-        if (!vendorIds.includes(v.id)) return v;
-        const patch = typeof patchOrFn === "function" ? patchOrFn(v) : patchOrFn;
-        return { ...v, ...patch };
-      }),
-    })
-  );
-};
+  const updateVendor = (vendorId, patch) => {
+    if (appMode === "enterprise") updateEntityCollection("assets", vendorId, patch);
+    else updateEntityCollection("vendors", vendorId, patch);
+  };
 
-  const selectVendor = (vendorId) => {
+  const updateByOrigin = (origin, entityId, patch) => {
+    const collectionKey = origin === "enterprise" ? "assets" : "vendors";
+    updateEntityCollection(collectionKey, entityId, patch);
+  };
+
+  const updateManyVendors = (vendorIds, patchOrFn) => {
+    const collectionKey = appMode === "enterprise" ? "assets" : "vendors";
+    setState((p) =>
+      normalizeAppState({
+        ...p,
+        [collectionKey]: (Array.isArray(p[collectionKey]) ? p[collectionKey] : []).map((v) => {
+          if (!vendorIds.includes(v.id)) return v;
+          const patch = typeof patchOrFn === "function" ? patchOrFn(v) : patchOrFn;
+          return { ...v, ...patch };
+        }),
+      })
+    );
+  };
+
+  const selectTPRMVendor = (vendorId) => {
     const v = vendors.find((x) => x.id === vendorId) || vendors[0] || null;
     setState((p) =>
-      normalizeState({
+      normalizeAppState({
         ...p,
         selectedVendorId: v?.id || "",
         selectedScenarioId: v?.scenarios?.[0]?.id || "",
@@ -847,19 +927,61 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     );
   };
 
+  const selectAsset = (assetId) => {
+    const a = assets.find((x) => x.id === assetId) || assets[0] || null;
+    setState((p) =>
+      normalizeAppState({
+        ...p,
+        selectedAssetId: a?.id || "",
+        selectedAssetScenarioId: a?.scenarios?.[0]?.id || "",
+      })
+    );
+  };
+
+  const selectVendor = (entityId) => {
+    if (appMode === "enterprise") selectAsset(entityId);
+    else selectTPRMVendor(entityId);
+  };
+
   const selectScenario = (scenarioId) => {
     setState((p) =>
-      normalizeState({
+      normalizeAppState(
+        appMode === "enterprise"
+          ? { ...p, selectedAssetScenarioId: scenarioId }
+          : { ...p, selectedScenarioId: scenarioId }
+      )
+    );
+  };
+
+  const selectContextFromDashboard = (origin, entityId, scenarioId) => {
+    if (origin === "enterprise") {
+      setAppMode("enterprise");
+      setState((p) =>
+        normalizeAppState({
+          ...p,
+          selectedAssetId: entityId,
+          selectedAssetScenarioId: scenarioId || p.selectedAssetScenarioId,
+        })
+      );
+      return;
+    }
+
+    setAppMode("tprm");
+    setState((p) =>
+      normalizeAppState({
         ...p,
-        selectedScenarioId: scenarioId,
+        selectedVendorId: entityId,
+        selectedScenarioId: scenarioId || p.selectedScenarioId,
       })
     );
   };
 
   // ---- Vendor create/edit UX state
   const [vendorForm, setVendorForm] = useState({ open: false, mode: "create", draft: null });
+  const [formTarget, setFormTarget] = useState("vendors"); // "vendors" | "assets"
 
-  const openCreateVendor = () => {
+  const openCreateVendor = (target = "vendors") => {
+    setFormTarget(target);
     const v = emptyVendor();
     setVendorForm({
       open: true,
@@ -872,13 +994,18 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     });
   };
 
-  const openEditVendor = (vendorId) => {
-    const v = vendors.find((x) => x.id === vendorId);
+  const openEditVendor = (vendorId, target = "vendors") => {
+    setFormTarget(target);
+    const list = target === "assets" ? assets : vendors;
+    const v = list.find((x) => x.id === vendorId);
     if (!v) return;
     setVendorForm({ open: true, mode: "edit", draft: JSON.parse(JSON.stringify(v)) });
   };
 
-  const closeVendorForm = () => setVendorForm({ open: false, mode: "create", draft: null });
+  const closeVendorForm = () => {
+    setVendorForm({ open: false, mode: "create", draft: null });
+    setFormTarget("vendors");
+  };
 
   const createVendor = () => {
     const d = vendorForm.draft;
@@ -908,15 +1035,25 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     };
 
     setState((p) => {
-      const current = Array.isArray(p.vendors) ? p.vendors : [];
+      const current = Array.isArray(p[formTarget]) ? p[formTarget] : [];
       const vendors = current.length === 1 && isPlaceholderVendor(current[0]) ? [v] : [...current, v];
 
-      return normalizeState({
-        ...p,
-        vendors,
-        selectedVendorId: v.id,
-        selectedScenarioId: v.scenarios?.[0]?.id || "",
-      });
+      const next =
+        formTarget === "assets"
+          ? {
+              ...p,
+              assets: vendors,
+              selectedAssetId: v.id,
+              selectedAssetScenarioId: v.scenarios?.[0]?.id || "",
+            }
+          : {
+              ...p,
+              vendors,
+              selectedVendorId: v.id,
+              selectedScenarioId: v.scenarios?.[0]?.id || "",
+            };
+
+      return normalizeAppState(next);
     });
 
     closeVendorForm();
@@ -927,9 +1064,9 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     if (!d) return;
 
     setState((p) =>
-      normalizeState({
+      normalizeAppState({
         ...p,
-        vendors: (Array.isArray(p.vendors) ? p.vendors : []).map((v) =>
+        [formTarget]: (Array.isArray(p[formTarget]) ? p[formTarget] : []).map((v) =>
           v.id === d.id ? { ...v, ...d } : v
         ),
       })
@@ -938,24 +1075,32 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     closeVendorForm();
   };
 
-  const deleteVendor = (vendorId) => {
+  const deleteVendor = (vendorId, target = "vendors") => {
     setState((p) => {
-      const next = (Array.isArray(p.vendors) ? p.vendors : []).filter((v) => v.id !== vendorId);
-      return normalizeState({ ...p, vendors: next, selectedVendorId: "", selectedScenarioId: "" });
+      const next = (Array.isArray(p[target]) ? p[target] : []).filter((v) => v.id !== vendorId);
+      return normalizeAppState(
+        target === "assets"
+          ? { ...p, assets: next, selectedAssetId: "", selectedAssetScenarioId: "" }
+          : { ...p, vendors: next, selectedVendorId: "", selectedScenarioId: "" }
+      );
     });
   };
 
   const resetAll = () => {
     if (typeof window !== "undefined") window.localStorage.removeItem(LS_KEY);
     const v = emptyVendor();
+    const a = emptyVendor();
     setState(
-      normalizeState({
+      normalizeAppState({
         vendors: [v],
         selectedVendorId: v.id,
         selectedScenarioId: v.scenarios?.[0]?.id || "",
+        assets: [a],
+        selectedAssetId: a.id,
+        selectedAssetScenarioId: a.scenarios?.[0]?.id || "",
       })
     );
-    setActiveView(appMode === "enterprise" ? "Scenarios" : "Vendors");
+    setActiveView(appMode === "enterprise" ? "Assets" : "Vendors");
     closeVendorForm();
   };
 
@@ -967,7 +1112,23 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     }
 
     const ds = makeTestDataset(appMode);
-    setState(normalizeState(ds));
+    setState((p) =>
+      normalizeAppState(
+        appMode === "enterprise"
+          ? {
+              ...p,
+              assets: ds.vendors,
+              selectedAssetId: ds.selectedVendorId,
+              selectedAssetScenarioId: ds.selectedScenarioId,
+            }
+          : {
+              ...p,
+              vendors: ds.vendors,
+              selectedVendorId: ds.selectedVendorId,
+              selectedScenarioId: ds.selectedScenarioId,
+            }
+      )
+    );
     setActiveView("Dashboard");
     closeVendorForm();
   };
@@ -975,6 +1136,7 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
   const tabs = useMemo(() => {
     if (appMode === "enterprise") {
       return [
+        { k: "Assets", label: "Assets" },
         { k: "Scenarios", label: "Scenarios" },
         { k: "Quantify", label: "Quantify" },
         { k: "Results", label: "Results" },
@@ -1000,15 +1162,20 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
   }, [tabs, activeView]);
 
   const totalScenarios = useMemo(() => {
-    return vendors.reduce((n, v) => n + (Array.isArray(v.scenarios) ? v.scenarios.length : 0), 0);
-  }, [vendors]);
+    const list = appMode === "enterprise" ? assets : vendors;
+    return list.reduce((n, v) => n + (Array.isArray(v.scenarios) ? v.scenarios.length : 0), 0);
+  }, [vendors, assets, appMode]);
 
-  const carried = useMemo(() => vendors.filter((v) => !!v.carryForward).length, [vendors]);
+  const carried = useMemo(() => {
+    const list = appMode === "enterprise" ? assets : vendors;
+    return list.filter((v) => !!v.carryForward).length;
+  }, [vendors, assets, appMode]);
 
-  const showContextBar = !vendorForm.open && activeView !== "Vendors";
+  const activeEntities = appMode === "enterprise" ? assets : vendors;
+  const showContextBar = !vendorForm.open && !["Vendors", "Assets"].includes(activeView);
 
   // Guards (évite crash si scenario null)
-  const needsVendor = activeView !== "Vendors";
+  const needsVendor = !["Vendors", "Assets"].includes(activeView);
   const needsScenario = ["Quantify", "Results", "Treatments", "Decisions"].includes(activeView);
 
   return (
@@ -1021,7 +1188,7 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
             <div style={{ marginTop: 6, opacity: 0.8 }}>Training only — data stays in your browser.</div>
             <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
               <Pill>Mode: {appMode === "enterprise" ? "Enterprise" : "TPRM"}</Pill>
-              <Pill>{vendors.length} vendor(s)</Pill>
+              <Pill>{activeEntities.length} {appMode === "enterprise" ? "asset(s)" : "vendor(s)"}</Pill>
               <Pill>{totalScenarios} scenario(s)</Pill>
               <Pill>Carry-forward: {carried}</Pill>
             </div>
@@ -1110,11 +1277,11 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
                     </div>
                     <select
                       className="input"
-                      value={selectedVendor?.id || ""}
+                      value={selectedContext?.id || ""}
                       onChange={(e) => selectVendor(e.target.value)}
-                      disabled={!vendors.length}
+                      disabled={!activeEntities.length}
                     >
-                      {vendors.map((v) => (
+                      {activeEntities.map((v) => (
                         <option key={v.id} value={v.id}>
                           {v.name?.trim() ? v.name : "(Unnamed vendor)"}
                         </option>
@@ -1128,9 +1295,9 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
                       className="input"
                       value={selectedScenario?.id || ""}
                       onChange={(e) => selectScenario(e.target.value)}
-                      disabled={!selectedVendor || !Array.isArray(selectedVendor?.scenarios) || selectedVendor.scenarios.length === 0}
+                      disabled={!selectedContext || !Array.isArray(selectedContext?.scenarios) || selectedContext.scenarios.length === 0}
                     >
-                      {(selectedVendor?.scenarios || []).map((s) => (
+                      {(selectedContext?.scenarios || []).map((s) => (
                         <option key={s.id} value={s.id}>
                           {s.title?.trim() ? s.title : "(Untitled scenario)"}
                         </option>
@@ -1139,19 +1306,19 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
                   </div>
 
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                    <Pill>Index: {selectedVendor ? tierIndex(selectedVendor.tiering || emptyTiering()) : "—"}</Pill>
-                    <Pill>Tier: {selectedVendor?.tier || "—"}</Pill>
+                    <Pill>Index: {selectedContext ? tierIndex(selectedContext.tiering || emptyTiering()) : "—"}</Pill>
+                    <Pill>Tier: {selectedContext?.tier || "—"}</Pill>
                   </div>
                 </div>
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  <Button className="btn" onClick={() => setActiveView("Vendors")}>
+                  <Button className="btn" onClick={() => setActiveView(appMode === "enterprise" ? "Assets" : "Vendors")}>
                     {appMode === "enterprise" ? "Manage assets" : "Manage vendors"}
                   </Button>
                 </div>
               </div>
 
-              {!selectedVendor ? (
+              {!selectedContext ? (
                 <>
                   <Divider />
                   <div style={{ fontSize: 13, opacity: 0.85 }}>
@@ -1176,6 +1343,7 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
             <VendorForm
               mode={vendorForm.mode}
               draft={vendorForm.draft}
+              entityLabel={formTarget === "assets" ? "asset" : "vendor"}
               onChange={(next) => setVendorForm((p) => ({ ...p, draft: next }))}
               onCancel={closeVendorForm}
               onSubmit={vendorForm.mode === "create" ? createVendor : saveVendor}
@@ -1185,17 +1353,41 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
               vendors={vendors}
               selectedVendorId={selectedVendor?.id || ""}
               onSelectVendor={(id) => selectVendor(id)}
-              onRequestCreate={openCreateVendor}
-              onRequestEdit={openEditVendor}
-              onDeleteVendor={deleteVendor}
+              onRequestCreate={() => openCreateVendor("vendors")}
+              onRequestEdit={(id) => openEditVendor(id, "vendors")}
+              onDeleteVendor={(id) => deleteVendor(id, "vendors")}
               onGoTiering={() => setActiveView("Tiering")}
+              labels={{
+                plural: "Vendors",
+                singular: "vendor",
+                add: "+ Add vendor",
+                emptySelect: "Select a vendor on the left, or click Add vendor.",
+                indexHint: "Go to tiering →",
+              }}
             />
-          ) : needsVendor && !selectedVendor ? (
+          ) : activeView === "Assets" ? (
+            <VendorsView
+              vendors={assets}
+              selectedVendorId={selectedAsset?.id || ""}
+              onSelectVendor={(id) => selectVendor(id)}
+              onRequestCreate={() => openCreateVendor("assets")}
+              onRequestEdit={(id) => openEditVendor(id, "assets")}
+              onDeleteVendor={(id) => deleteVendor(id, "assets")}
+              onGoTiering={() => setActiveView("Scenarios")}
+              labels={{
+                plural: "Assets",
+                singular: "asset",
+                add: "+ Add asset",
+                emptySelect: "Select an asset on the left, or click Add asset.",
+                indexHint: "Go to scenarios →",
+              }}
+            />
+          ) : needsVendor && !selectedContext ? (
             <Card>
-              <div style={{ fontSize: 18, fontWeight: 900 }}>No vendor</div>
+              <div style={{ fontSize: 18, fontWeight: 900 }}>{appMode === "enterprise" ? "No asset" : "No vendor"}</div>
               <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
                 {appMode === "enterprise"
-                  ? <>Create an asset first in <strong>Vendors</strong> (asset registry in phase 1).</>
+                  ? <>Create an asset first in <strong>Assets</strong>.</>
                   : <>Create a vendor first in <strong>Vendors</strong>.</>}
               </div>
             </Card>
@@ -1207,10 +1399,10 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
               </div>
             </Card>
           ) : activeView === "Tiering" ? (
-            <TieringView vendor={selectedVendor} updateVendor={updateVendor} setActiveView={setActiveView} />
+            <TieringView vendor={selectedContext} updateVendor={updateVendor} setActiveView={setActiveView} />
           ) : activeView === "Scenarios" ? (
   <ScenariosView
-    vendor={selectedVendor}
+    vendor={selectedContext}
     updateVendor={updateVendor}
     setActiveView={setActiveView}
     selectScenario={selectScenario}
@@ -1218,32 +1410,35 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
   />
 ) : activeView === "Quantify" ? (
             <QuantifyView
-  vendor={selectedVendor}
+  vendor={selectedContext}
   scenario={selectedScenario}
   updateVendor={updateVendor}
   setActiveView={setActiveView}
 />
           ) : activeView === "Results" ? (
-            <ResultsView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} setActiveView={setActiveView} />
+            <ResultsView vendor={selectedContext} scenario={selectedScenario} updateVendor={updateVendor} setActiveView={setActiveView} />
           ) : activeView === "Treatments" ? (
   <TreatmentsView
-    vendor={selectedVendor}
+    vendor={selectedContext}
     scenario={selectedScenario}
     updateVendor={updateVendor}
     appMode={appMode}
   />
 ) : activeView === "Decisions" ? (
-            <DecisionsView vendor={selectedVendor} scenario={selectedScenario} updateVendor={updateVendor} appMode={appMode} />
+            <DecisionsView vendor={selectedContext} scenario={selectedScenario} updateVendor={updateVendor} appMode={appMode} />
           ) : activeView === "Dashboard" ? (
   <DashboardView
     vendors={vendors}
+    assets={assets}
     setActiveView={setActiveView}
     selectVendor={selectVendor}
     selectScenario={selectScenario}
     updateVendor={updateVendor}
+    updateByOrigin={updateByOrigin}
     updateManyVendors={updateManyVendors}
     appMode={appMode}
-    focusedVendorId={selectedVendor?.id || ""}
+    focusedVendorId={selectedContext?.id || ""}
+    onSelectContext={selectContextFromDashboard}
   />
 ) : (
             <Card>
