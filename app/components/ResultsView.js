@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState, useEffect } from "react";
 import { ensureQuant, runFairMonteCarlo } from "../../lib/fairEngine";
-import { DecisionNarrative, HorizontalBarList, ScoreGauge } from "./DecisionViz";
+import { DecisionNarrative, QuantileStrip } from "./DecisionViz";
 
 /**
  * ResultsView — FAIR only
@@ -598,34 +598,21 @@ export default function ResultsView({ vendor, scenario, updateVendor, setActiveV
 
           <Card>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
-              <ScoreGauge
-                title="Decision pressure index"
-                subtitle="Combines annual event chance and ALE tail severity."
-                score={decisionPressure?.score || 0}
-                max={100}
+              <QuantileStrip
+                title="ALE quantile strip"
+                subtitle="Spread between normal and stress-year outcomes."
+                p10={Number(q?.stats?.ale?.p10)}
+                p50={Number(q?.stats?.ale?.ml)}
+                p90={Number(q?.stats?.ale?.p90)}
               />
               <DecisionNarrative
                 tone={decisionPressure?.score >= 70 ? "bad" : decisionPressure?.score >= 45 ? "warn" : "good"}
                 title="What this means for decision-makers"
                 message={
                   decisionPressure
-                    ? `Annual event probability is ${(decisionPressure.annualEventProb * 100).toFixed(1)}% with an ALE tail ratio (p90/p50) of ${decisionPressure.tailRatio.toFixed(2)}. Use this to decide whether acceptance is possible or if stronger controls/conditions are required.`
-                    : "Complete LEF and run simulation to derive a decision pressure index."
+                    ? `Decision pressure index: ${decisionPressure.score.toFixed(0)}/100. Annual event probability is ${(decisionPressure.annualEventProb * 100).toFixed(1)}% and ALE tail ratio (p90/p50) is ${decisionPressure.tailRatio.toFixed(2)}.`
+                    : "Complete LEF and run simulation to derive decision pressure signals."
                 }
-              />
-            </div>
-
-            <div style={{ marginTop: 10 }}>
-              <HorizontalBarList
-                title="ALE quantile profile"
-                subtitle="Compare typical and stress-year loss levels."
-                items={[
-                  { key: "p10", label: "ALE p10", value: Number(q?.stats?.ale?.p10) },
-                  { key: "p50", label: "ALE p50", value: Number(q?.stats?.ale?.ml) },
-                  { key: "p90", label: "ALE p90", value: Number(q?.stats?.ale?.p90) },
-                ]}
-                valueFormatter={(v) => money(v)}
-                tone="rgba(236,120,51,0.9)"
               />
             </div>
           </Card>

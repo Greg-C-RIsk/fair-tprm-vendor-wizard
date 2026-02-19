@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { emptyScenario, uid } from "../../lib/model";
-import { DecisionNarrative, ScoreGauge, StackedShareBar } from "./DecisionViz";
+import { DecisionNarrative, DonutBreakdown } from "./DecisionViz";
 
 function scenarioCompleteness(s) {
   const checks = [
@@ -136,6 +136,10 @@ export default function ScenariosView({
   }, [localScenarios]);
 
   const activeCompleteness = useMemo(() => scenarioCompleteness(activeScenario), [activeScenario]);
+  const activeCompletionPct = useMemo(() => {
+    if (!activeCompleteness.total) return 0;
+    return Math.round((activeCompleteness.score / activeCompleteness.total) * 100);
+  }, [activeCompleteness]);
 
   if (!vendor) {
     return (
@@ -238,7 +242,7 @@ export default function ScenariosView({
         </div>
 
         <div style={{ marginTop: 12 }}>
-          <StackedShareBar
+          <DonutBreakdown
             title="Scenario readiness"
             subtitle="Portfolio quality before quantification and decisions."
             segments={[
@@ -246,6 +250,7 @@ export default function ScenariosView({
               { key: "missing", label: "Missing results", value: portfolioState.missingResults, color: "rgba(245,158,11,0.9)" },
               { key: "draft", label: "Draft", value: portfolioState.draft, color: "rgba(156,163,175,0.9)" },
             ]}
+            centerLabel={localScenarios.length.toString()}
           />
         </div>
 
@@ -326,11 +331,14 @@ export default function ScenariosView({
             </div>
 
             <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <ScoreGauge
+              <DonutBreakdown
                 title="Scenario completeness"
-                subtitle="Narrative + quant inputs + quant outputs."
-                score={activeCompleteness.score}
-                max={activeCompleteness.total}
+                subtitle="Narrative, assumptions, quant inputs, quant outputs."
+                segments={[
+                  { key: "complete", label: "Completed checks", value: activeCompleteness.score, color: "rgba(128,46,255,0.9)" },
+                  { key: "remaining", label: "Remaining checks", value: Math.max(0, activeCompleteness.total - activeCompleteness.score), color: "rgba(156,163,175,0.58)" },
+                ]}
+                centerLabel={`${activeCompletionPct}%`}
               />
               <DecisionNarrative
                 tone={activeCompleteness.status === "Ready" ? "good" : activeCompleteness.status === "Missing results" ? "warn" : "info"}

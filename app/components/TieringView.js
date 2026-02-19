@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { emptyTiering, tierIndex } from "../../lib/model";
-import { DecisionNarrative, HorizontalBarList, ScoreGauge } from "./DecisionViz";
+import { DecisionNarrative, RadarProfile } from "./DecisionViz";
 
 function clampInt(n, min, max) {
   const x = Number(n);
@@ -372,19 +372,11 @@ export default function TieringView({ vendor, updateVendor }) {
           </div>
 
           <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-            <ScoreGauge
-              title="Tier index progression"
-              subtitle="Relative position in the 1 to 3,125 range."
-              score={idx}
-              max={3125}
-            />
-
-            <HorizontalBarList
-              title="Factor profile"
-              subtitle="Higher scores are the strongest tier drivers."
-              items={factorProfile}
-              valueFormatter={(v) => `${Math.round(v)}/5`}
-              tone="rgba(236,120,51,0.9)"
+            <RadarProfile
+              title="Factor profile radar"
+              subtitle={`Index ${idx.toLocaleString()} / 3,125. Shape highlights dominant risk drivers.`}
+              dimensions={factorProfile.map((f) => ({ label: f.label, value: f.value }))}
+              maxValue={5}
             />
 
             <DecisionNarrative
@@ -398,6 +390,33 @@ export default function TieringView({ vendor, updateVendor }) {
                   : `This context is lower criticality. Primary decision question: can this be accepted with monitoring and periodic review? Main drivers: ${topDrivers.join(", ") || "n/a"}.`
               }
             />
+
+            <div
+              style={{
+                border: "1px solid rgba(255,255,255,0.10)",
+                borderRadius: 12,
+                padding: 12,
+                background: "rgba(255,255,255,0.03)",
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.82 }}>Top drivers</div>
+              <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {(topDrivers.length ? topDrivers : ["n/a"]).map((d) => (
+                  <span
+                    key={d}
+                    style={{
+                      border: "1px solid rgba(255,255,255,0.14)",
+                      borderRadius: 999,
+                      padding: "4px 10px",
+                      fontSize: 12,
+                      fontWeight: 800,
+                    }}
+                  >
+                    {d}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
 
           <textarea

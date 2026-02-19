@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { uid } from "../../lib/model";
-import { DecisionNarrative, HorizontalBarList, ScoreGauge, StackedShareBar } from "./DecisionViz";
+import { DecisionNarrative, DonutBreakdown } from "./DecisionViz";
 
 // -------------------- UI helpers (declared outside to avoid focus loss) --------------------
 
@@ -199,6 +199,87 @@ function pct(n) {
   return `${Math.round(n * 100)}%`;
 }
 
+function statusColor(status) {
+  if (status === "Implemented") return "rgba(34,197,94,0.85)";
+  if (status === "Planned") return "rgba(59,130,246,0.85)";
+  if (status === "Rejected") return "rgba(239,68,68,0.85)";
+  return "rgba(245,158,11,0.85)";
+}
+
+function ratingMl(label) {
+  return RATING_SCALE[label]?.ml ?? 0;
+}
+
+function ControlScatter({ controls }) {
+  const W = 340;
+  const H = 220;
+  const pad = { l: 38, r: 16, t: 14, b: 32 };
+  const points = (Array.isArray(controls) ? controls : []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    x: ratingMl(c.coverage),
+    y: ratingMl(c.intended),
+    r: 5 + ratingMl(c.reliability) * 10,
+    color: statusColor(c.status),
+  }));
+
+  const mapX = (x) => pad.l + x * (W - pad.l - pad.r);
+  const mapY = (y) => pad.t + (1 - y) * (H - pad.t - pad.b);
+
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(255,255,255,0.10)",
+        borderRadius: 12,
+        padding: 10,
+        background: "rgba(255,255,255,0.03)",
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 900 }}>Control effectiveness map</div>
+      <div style={{ marginTop: 4, fontSize: 12, opacity: 0.76 }}>
+        X: coverage, Y: intended efficacy, bubble size: reliability.
+      </div>
+
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", marginTop: 8 }}>
+        <rect x={pad.l} y={pad.t} width={W - pad.l - pad.r} height={H - pad.t - pad.b} fill="rgba(255,255,255,0.02)" />
+        {[0, 0.25, 0.5, 0.75, 1].map((g) => (
+          <line
+            key={`h_${g}`}
+            x1={pad.l}
+            y1={mapY(g)}
+            x2={W - pad.r}
+            y2={mapY(g)}
+            stroke="rgba(255,255,255,0.10)"
+          />
+        ))}
+        {[0, 0.25, 0.5, 0.75, 1].map((g) => (
+          <line
+            key={`v_${g}`}
+            x1={mapX(g)}
+            y1={pad.t}
+            x2={mapX(g)}
+            y2={H - pad.b}
+            stroke="rgba(255,255,255,0.08)"
+          />
+        ))}
+        <line x1={pad.l} y1={pad.t} x2={pad.l} y2={H - pad.b} stroke="rgba(255,255,255,0.25)" />
+        <line x1={pad.l} y1={H - pad.b} x2={W - pad.r} y2={H - pad.b} stroke="rgba(255,255,255,0.25)" />
+        {points.map((p) => (
+          <circle key={p.id} cx={mapX(p.x)} cy={mapY(p.y)} r={p.r} fill={p.color} opacity="0.85">
+            <title>{p.name || "Control"}</title>
+          </circle>
+        ))}
+        <text x={W / 2} y={H - 8} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.72">
+          Coverage
+        </text>
+        <text x={10} y={H / 2} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.72" transform={`rotate(-90 10 ${H / 2})`}>
+          Intended efficacy
+        </text>
+      </svg>
+    </div>
+  );
+}
+
 // -------------------- Control model --------------------
 
 function emptyControl() {
@@ -359,16 +440,7 @@ export default function TreatmentsView({ vendor, scenario, updateVendor, appMode
     }
 
     const avgOp = opMls.length ? opMls.reduce((a, b) => a + b, 0) / opMls.length : 0;
-    const ranked = [...localControls]
-      .map((c) => ({
-        key: c.id,
-        label: c.name?.trim() ? c.name : "(Untitled control)",
-        value: opEffectivenessFromRatings(c.intended, c.coverage, c.reliability).ml * 100,
-      }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 6);
-
-    return { status, fn, avgOp, ranked, whatIfIncluded };
+    return { status, fn, avgOp, whatIfIncluded };
   }, [localControls]);
 
   return (
@@ -409,13 +481,33 @@ export default function TreatmentsView({ vendor, scenario, updateVendor, appMode
       </Card>
 
       <Card>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
-          <ScoreGauge
-            title="Control program strength"
-            subtitle="Average operational effectiveness across all controls."
-            score={controlMix.avgOp * 100}
-            max={100}
-          />
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 12, alignItems: "start" }}>
+          <ControlScatter controls={localControls} />
+          <div style={{ display: "grid", gap: 10 }}>
+            <DonutBreakdown
+              title="Status mix"
+              subtitle="Execution maturity of the treatment plan."
+              segments={[
+                { key: "impl", label: "Implemented", value: controlMix.status.Implemented, color: "rgba(34,197,94,0.9)" },
+                { key: "planned", label: "Planned", value: controlMix.status.Planned, color: "rgba(59,130,246,0.9)" },
+                { key: "proposed", label: "Proposed", value: controlMix.status.Proposed, color: "rgba(245,158,11,0.9)" },
+                { key: "rejected", label: "Rejected", value: controlMix.status.Rejected, color: "rgba(239,68,68,0.9)" },
+              ]}
+              centerLabel={`${localControls.length}`}
+            />
+            <DonutBreakdown
+              title="FAIR-CAM function mix"
+              subtitle="Balance across direct, variance, and decision controls."
+              segments={[
+                { key: "lec", label: "LEC", value: controlMix.fn.LEC, color: "rgba(236,120,51,0.9)" },
+                { key: "vmc", label: "VMC", value: controlMix.fn.VMC, color: "rgba(128,46,255,0.9)" },
+                { key: "dsc", label: "DSC", value: controlMix.fn.DSC, color: "rgba(59,130,246,0.9)" },
+              ]}
+            />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10 }}>
           <DecisionNarrative
             tone={controlMix.avgOp >= 0.7 ? "good" : controlMix.avgOp >= 0.45 ? "warn" : "bad"}
             title="Treatment decision insight"
@@ -426,38 +518,6 @@ export default function TreatmentsView({ vendor, scenario, updateVendor, appMode
                 ? `Control set is moderate. Prioritize high-leverage controls before approving risk acceptance (${controlMix.whatIfIncluded} planned/proposed included in what-if).`
                 : `Control reliability is currently weak. Decision should remain conditional until stronger controls are designed and tested (${controlMix.whatIfIncluded} planned/proposed included in what-if).`
             }
-          />
-        </div>
-
-        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <StackedShareBar
-            title="Status mix"
-            subtitle="Execution maturity of the treatment plan."
-            segments={[
-              { key: "impl", label: "Implemented", value: controlMix.status.Implemented, color: "rgba(34,197,94,0.9)" },
-              { key: "planned", label: "Planned", value: controlMix.status.Planned, color: "rgba(59,130,246,0.9)" },
-              { key: "proposed", label: "Proposed", value: controlMix.status.Proposed, color: "rgba(245,158,11,0.9)" },
-              { key: "rejected", label: "Rejected", value: controlMix.status.Rejected, color: "rgba(239,68,68,0.9)" },
-            ]}
-          />
-          <StackedShareBar
-            title="FAIR-CAM function mix"
-            subtitle="Coverage across direct, variance, and decision controls."
-            segments={[
-              { key: "lec", label: "LEC", value: controlMix.fn.LEC, color: "rgba(236,120,51,0.9)" },
-              { key: "vmc", label: "VMC", value: controlMix.fn.VMC, color: "rgba(128,46,255,0.9)" },
-              { key: "dsc", label: "DSC", value: controlMix.fn.DSC, color: "rgba(59,130,246,0.9)" },
-            ]}
-          />
-        </div>
-
-        <div style={{ marginTop: 10 }}>
-          <HorizontalBarList
-            title="Top controls by expected effectiveness"
-            subtitle="Higher values indicate stronger potential decision leverage."
-            items={controlMix.ranked}
-            valueFormatter={(v) => `${Math.round(v)}%`}
-            tone="rgba(236,120,51,0.9)"
           />
         </div>
       </Card>

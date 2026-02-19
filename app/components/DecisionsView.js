@@ -8,7 +8,7 @@ import {
   getBaselineControls,
   getWhatIfControls,
 } from "../../lib/fairCamEngine";
-import { BaselineResidualCompare, DecisionNarrative, ScoreGauge } from "./DecisionViz";
+import { BaselineResidualCompare, DecisionNarrative } from "./DecisionViz";
 
 function moneyEUR(n) {
   if (!Number.isFinite(n)) return "—";
@@ -300,14 +300,6 @@ export default function DecisionsView({ vendor, scenario, updateVendor, appMode 
           </div>
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          <ScoreGauge
-            title="Decision record completion"
-            subtitle="Required fields filled for audit-grade traceability."
-            score={completion}
-            max={100}
-          />
-        </div>
       </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }}>

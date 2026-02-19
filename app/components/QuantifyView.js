@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ensureQuant, runFairMonteCarlo } from "../../lib/fairEngine";
-import { DecisionNarrative, HorizontalBarList, ScoreGauge } from "./DecisionViz";
+import { DecisionNarrative, FlowChain, HeatDotMatrix } from "./DecisionViz";
 
 function toNum(x) {
   if (x === null || x === undefined) return null;
@@ -239,6 +239,29 @@ export default function QuantifyView({ vendor, scenario, updateVendor }) {
     return total / triadQualityRows.length;
   }, [triadQualityRows]);
 
+  const flowNodes = useMemo(() => {
+    const v = (x, d = 2) => (x === null ? "—" : Number(x).toFixed(d));
+    if (level === "LEF") {
+      return [
+        { key: "lef_in", label: "LEF input", value: v(toNum(q.lef?.ml), 2) },
+        { key: "lef_out", label: "LEF used", value: v(lefML, 2) },
+      ];
+    }
+    if (level === "TEF") {
+      return [
+        { key: "tef", label: "TEF", value: v(tefML, 2) },
+        { key: "susc", label: "Susceptibility", value: v(suscML, 3) },
+        { key: "lef", label: "LEF", value: v(lefML, 2) },
+      ];
+    }
+    return [
+      { key: "cf", label: "Contact Frequency", value: v(toNum(q.contactFrequency?.ml), 2) },
+      { key: "tef", label: "TEF (CF*PoA)", value: v(tefML, 2) },
+      { key: "susc", label: "Susceptibility", value: v(suscML, 3) },
+      { key: "lef", label: "LEF", value: v(lefML, 2) },
+    ];
+  }, [level, q, tefML, suscML, lefML]);
+
   const patch = (p) => {
     setQ((prev) => ensureQuant({ ...prev, ...p }));
     setIsDirty(true);
@@ -418,33 +441,33 @@ export default function QuantifyView({ vendor, scenario, updateVendor }) {
 
       <Card>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
-          <ScoreGauge
-            title="Quantification quality"
-            subtitle="Are the current inputs decision-grade?"
-            score={qualityScore}
-            max={100}
+          <FlowChain
+            title="Frequency propagation map"
+            subtitle="How your current abstraction level propagates into LEF."
+            nodes={flowNodes}
           />
 
+          <HeatDotMatrix
+            title="Input quality matrix"
+            subtitle="Each row combines completeness + ordering + bounds (for probabilities)."
+            rows={triadQualityRows.map((r) => ({ key: r.label, label: r.label, value: r.qualityPct }))}
+          />
+        </div>
+
+        <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+          <div style={{ fontSize: 12, opacity: 0.82, fontWeight: 900 }}>
+            Overall input quality: {Math.round(qualityScore)}%
+          </div>
           <DecisionNarrative
             tone={qualityScore >= 80 ? "good" : qualityScore >= 55 ? "warn" : "bad"}
             title="Decision reliability"
             message={
               qualityScore >= 80
-                ? "Input quality is strong enough for management discussions. Validate assumptions and run sensitivity checks before final decision."
+                ? "Inputs are coherent enough for decision discussions. Confirm assumptions and sensitivity before final approval."
                 : qualityScore >= 55
-                ? "Results are directionally useful, but uncertainty remains high. Tighten key triads before using p90 thresholds as hard decision gates."
-                : "Input quality is too weak for decision commitment. Complete and order triads first, then rerun simulation."
+                ? "Model outputs are informative but still unstable. Improve weakest triads before using p90 as a hard threshold."
+                : "Current inputs are not decision-grade yet. Complete and reorder triads, then rerun the simulation."
             }
-          />
-        </div>
-
-        <div style={{ marginTop: 10 }}>
-          <HorizontalBarList
-            title="Triad quality by driver"
-            subtitle="Checks completeness + min ≤ ML ≤ max (+ probability bounds when applicable)."
-            items={triadQualityRows.map((r) => ({ key: r.label, label: r.label, value: r.qualityPct }))}
-            valueFormatter={(v) => `${Math.round(v)}%`}
-            tone="rgba(128,46,255,0.9)"
           />
         </div>
       </Card>
