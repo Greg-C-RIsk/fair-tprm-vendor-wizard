@@ -604,6 +604,7 @@ function VendorsView({
 // Page
 // ---------------------------
 export default function Page() {
+  const [appMode, setAppMode] = useState("tprm"); // "primary" | "tprm"
   const [activeView, setActiveView] = useState("Vendors");
 
   // IMPORTANT: on attend l’hydratation avant de persister / utiliser certains onglets
@@ -810,7 +811,7 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
         selectedScenarioId: v.scenarios?.[0]?.id || "",
       })
     );
-    setActiveView("Vendors");
+    setActiveView(appMode === "primary" ? "Scenarios" : "Vendors");
     closeVendorForm();
   };
 
@@ -826,16 +827,32 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
     closeVendorForm();
   };
 
-  const tabs = [
-    { k: "Vendors", label: "Vendors" },
-    { k: "Tiering", label: "Tiering" },
-    { k: "Scenarios", label: "Scenarios" },
-    { k: "Quantify", label: "Quantify" },
-    { k: "Results", label: "Results" },
-    { k: "Treatments", label: "Treatments" },
-    { k: "Decisions", label: "Decisions" },
-    { k: "Dashboard", label: "Dashboard" },
-  ];
+  const tabs = useMemo(() => {
+    if (appMode === "primary") {
+      return [
+        { k: "Scenarios", label: "Scenarios" },
+        { k: "Quantify", label: "Quantify" },
+        { k: "Results", label: "Results" },
+        { k: "Treatments", label: "Treatments" },
+        { k: "Decisions", label: "Decisions" },
+        { k: "Dashboard", label: "Dashboard" },
+      ];
+    }
+    return [
+      { k: "Vendors", label: "Vendors" },
+      { k: "Tiering", label: "Tiering" },
+      { k: "Scenarios", label: "Scenarios" },
+      { k: "Quantify", label: "Quantify" },
+      { k: "Results", label: "Results" },
+      { k: "Decisions", label: "Decisions" },
+      { k: "Dashboard", label: "Dashboard" },
+    ];
+  }, [appMode]);
+
+  useEffect(() => {
+    if (tabs.some((t) => t.k === activeView)) return;
+    setActiveView(tabs[0]?.k || "Scenarios");
+  }, [tabs, activeView]);
 
   const totalScenarios = useMemo(() => {
     return vendors.reduce((n, v) => n + (Array.isArray(v.scenarios) ? v.scenarios.length : 0), 0);
@@ -855,9 +872,10 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
         {/* Title */}
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.02em" }}>FAIR TPRM Training Tool</div>
+            <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.02em" }}>FAIR Risk Studio</div>
             <div style={{ marginTop: 6, opacity: 0.8 }}>Training only — data stays in your browser.</div>
             <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Pill>Mode: {appMode === "primary" ? "Primary Risk" : "TPRM"}</Pill>
               <Pill>{vendors.length} vendor(s)</Pill>
               <Pill>{totalScenarios} scenario(s)</Pill>
               <Pill>Carry-forward: {carried}</Pill>
@@ -877,6 +895,38 @@ const updateManyVendors = (vendorIds, patchOrFn) => {
         {/* Tabs */}
         <div style={{ marginTop: 14 }}>
           <Card style={{ padding: 10 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <button
+                onClick={() => setAppMode("primary")}
+                style={{
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: appMode === "primary" ? "rgba(16,185,129,0.24)" : "rgba(255,255,255,0.06)",
+                  color: "inherit",
+                  borderRadius: 999,
+                  padding: "8px 12px",
+                  cursor: "pointer",
+                  fontWeight: 800,
+                  fontSize: 13,
+                }}
+              >
+                Primary Risk Mode
+              </button>
+              <button
+                onClick={() => setAppMode("tprm")}
+                style={{
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: appMode === "tprm" ? "rgba(59,130,246,0.22)" : "rgba(255,255,255,0.06)",
+                  color: "inherit",
+                  borderRadius: 999,
+                  padding: "8px 12px",
+                  cursor: "pointer",
+                  fontWeight: 800,
+                  fontSize: 13,
+                }}
+              >
+                TPRM Mode
+              </button>
+            </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {tabs.map((t) => (
                 <button
